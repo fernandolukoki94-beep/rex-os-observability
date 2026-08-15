@@ -11,8 +11,10 @@ def client(tmp_path, monkeypatch):
 
     engine = rex_core.OfflineEventEngine(str(tmp_path / "events.json"))
     telemetry = rex_core.JsonTelemetryRepository(str(tmp_path / "telemetry.json"))
+    audit = rex_core.JsonAuditLog(str(tmp_path / "audit.json"))
     monkeypatch.setattr(rex_core, "event_engine", engine)
     monkeypatch.setattr(rex_core, "telemetry_repository", telemetry)
+    monkeypatch.setattr(rex_core, "audit_log", audit)
     app.config.update({"TESTING": True})
     with app.test_client() as test_client:
         yield test_client
@@ -98,3 +100,44 @@ def test_event_validation_and_mine_telemetry(client):
     sequence = client.get("/api/telemetry/mine/pump-sequence")
     assert sequence.get_json()["message"] == "Anomaly detected"
     assert sequence.get_json()["data"][-1]["anomaly_detected"] is True
+
+
+def test_rbac_and_audit_log_are_available_when_enabled(client, monkeypatch):
+    monkeypatch.setenv("REX_RBAC_ENFORCED", "1")
+    payload = {
+        "event_id": "REX-RBAC-001",
+        "event_type": "EQUIPMENT_INCIDENT",
+        "description": "Evento protegido",
+        "source_device": "field-device-07",
+        "operator": "operator-demo-01",
+        "location": "Pit North",
+    }
+    denied = client.post("/api/events", json=payload, headers={"X-REX-Role": "VIEWER"})
+    assert denied.status_code == 403
+    allowed = client.post("/api/events", json=payload, headers={"X-REX-Role": "SUPERVISOR", "X-REX-Actor": "fernando"})
+    assert allowed.status_code == 201
+    audit = client.get("/api/audit").get_json()["data"]
+    assert audit[0]["result"] == "denied"
+    assert audit[-1]["actor"] == "fernando"
+
+
+def test_rex_health_reports_runtime_components(client):
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["status"] == "healthy"
+    assert payload["service"] == "rex-observability"
+    assert payload["components"]["database"]["adapter"] == "JsonTelemetryRepository"
+    assert payload["components"]["edge"]["adapter"] == "SyntheticTelemetryAdapter"
+    assert payload["components"]["telemetry"]["source"] == "synthetic"
+    assert "max_rss_kb" in payload["process"]
+
+
+def test_optional_api_key_rejects_missing_and_wrong_keys(client, monkeypatch):
+    monkeypatch.setenv("REX_API_KEY", "local-demo-secret")
+    missing = client.get("/api/health")
+    wrong = client.get("/api/health", headers={"X-REX-API-Key": "wrong"})
+    correct = client.get("/api/health", headers={"X-REX-API-Key": "local-demo-secret"})
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert correct.status_code == 200

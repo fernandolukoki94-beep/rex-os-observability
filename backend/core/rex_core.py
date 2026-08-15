@@ -1,6 +1,7 @@
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, g, jsonify, render_template, request
 import hmac
 import os
+import resource
 import time
 import uuid
 from pathlib import Path
@@ -10,6 +11,8 @@ from backend.core.services import (
     OfflineEventEngine,
     OperationalEvent,
 )
+from backend.core.services.access_control import actor_from_headers
+from backend.core.services.audit_log import JsonAuditLog
 from backend.simulator.mine.telemetry import MineSimulator
 
 app = Flask(__name__, template_folder=str(Path(__file__).resolve().parent.parent.parent / "templates"))
@@ -30,11 +33,56 @@ telemetry_repository = JsonTelemetryRepository(
 )
 event_engine = OfflineEventEngine(os.getenv("REX_EVENT_STORE", "data/offline_events.json"))
 mine_simulator = MineSimulator()
+audit_log = JsonAuditLog()
+_request_latencies_ms = []
+_api_error_count = 0
+
+
+@app.before_request
+def start_request_timer():
+    g.rex_started_at = time.perf_counter()
+
+
+@app.after_request
+def record_request_metrics(response):
+    global _api_error_count
+    if request.path.startswith("/api"):
+        elapsed_ms = (time.perf_counter() - getattr(g, "rex_started_at", time.perf_counter())) * 1000
+        _request_latencies_ms.append(round(elapsed_ms, 2))
+        del _request_latencies_ms[:-100]
+        if response.status_code >= 400:
+            _api_error_count += 1
+    return response
 
 
 @app.route('/', methods=['GET'])
 def dashboard():
     return render_template('index.html')
+
+
+@app.route('/api/health', methods=['GET'])
+def rex_health():
+    """Expose operational health of the REX runtime itself."""
+    events = event_engine.all_events()
+    failed = sum(1 for event in events if event.sync_status.value == "FAILED")
+    pending = sum(1 for event in events if event.sync_status.value in {"PENDING", "SYNCING"})
+    store_path = Path(os.getenv("REX_TELEMETRY_STORE", "data/telemetry_history.json"))
+    storage_bytes = store_path.stat().st_size if store_path.exists() else 0
+    avg_latency = round(sum(_request_latencies_ms) / len(_request_latencies_ms), 2) if _request_latencies_ms else 0
+    return jsonify({
+        "status": "healthy",
+        "service": "rex-observability",
+        "components": {
+            "api": {"status": "healthy", "latency_ms_avg": avg_latency, "errors": _api_error_count},
+            "database": {"status": "healthy", "adapter": "JsonTelemetryRepository"},
+            "queue": {"status": "healthy" if failed == 0 else "degraded", "depth": pending, "failed": failed},
+            "edge": {"status": "healthy", "adapter": "SyntheticTelemetryAdapter"},
+            "sync": {"status": "healthy" if failed == 0 else "degraded", "pending": pending, "failed": failed},
+            "storage": {"status": "healthy", "events": len(events), "telemetry_bytes": storage_bytes},
+            "telemetry": {"status": "healthy", "source": "synthetic"},
+        },
+        "process": {"max_rss_kb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss},
+    }), 200
 
 
 # Configuração de Alertas (Podes trocar pelo Webhook real do teu bot do Telegram/WhatsApp)
@@ -69,6 +117,10 @@ def receive_metrics():
 
 @app.route('/api/events', methods=['POST'])
 def create_operational_event():
+    actor = actor_from_headers(request.headers.get("X-REX-Actor"), request.headers.get("X-REX-Role") or ("OPERATOR" if not os.getenv("REX_RBAC_ENFORCED") else None))
+    if os.getenv("REX_RBAC_ENFORCED") and not actor.can("write"):
+        audit_log.record(actor=actor.actor_id, role=actor.role, action="create_event", resource="operational_event", result="denied")
+        return jsonify({"status": "error", "message": "role lacks write permission"}), 403
     data = request.get_json(silent=True) or {}
     required = ["event_type", "description", "source_device", "operator", "location"]
     missing = [field for field in required if not data.get(field)]
@@ -78,6 +130,7 @@ def create_operational_event():
     event_id = data.get("event_id") or f"REX-EVT-{uuid.uuid4().hex[:12].upper()}"
     existing = event_engine.get(event_id)
     if existing is not None:
+        audit_log.record(actor=actor.actor_id, role=actor.role, action="create_event", resource=event_id, result="idempotent")
         return jsonify({
             "status": "success",
             "idempotent": True,
@@ -95,6 +148,7 @@ def create_operational_event():
         created_at=data.get("created_at"),
     )
     event_engine.enqueue(event)
+    audit_log.record(actor=actor.actor_id, role=actor.role, action="create_event", resource=event_id, result="created")
     return jsonify({"status": "success", "data": event.to_dict()}), 201
 
 
@@ -105,12 +159,22 @@ def list_operational_events():
 
 @app.route('/api/events/sync', methods=['POST'])
 def sync_operational_events():
+    actor = actor_from_headers(request.headers.get("X-REX-Actor"), request.headers.get("X-REX-Role") or ("OPERATOR" if not os.getenv("REX_RBAC_ENFORCED") else None))
+    if os.getenv("REX_RBAC_ENFORCED") and not actor.can("sync"):
+        audit_log.record(actor=actor.actor_id, role=actor.role, action="sync_events", resource="offline_queue", result="denied")
+        return jsonify({"status": "error", "message": "role lacks sync permission"}), 403
     synced = event_engine.sync_pending(lambda event: bool(event.event_id and event.description))
+    audit_log.record(actor=actor.actor_id, role=actor.role, action="sync_events", resource="offline_queue", result="completed", metadata={"count": len(synced)})
     return jsonify({
         "status": "success",
         "synced": [event.to_dict() for event in synced if event.sync_status.value == "SYNCED"],
         "failed": [event.to_dict() for event in synced if event.sync_status.value == "FAILED"],
     }), 200
+
+
+@app.route('/api/audit', methods=['GET'])
+def list_audit_entries():
+    return jsonify({"status": "success", "data": audit_log.all()}), 200
 
 
 @app.route('/api/telemetry/mine', methods=['GET'])
