@@ -1,17 +1,24 @@
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify, render_template, request
 import os
 import time
 import uuid
+from pathlib import Path
 
 from core.services import OfflineEventEngine, OperationalEvent
 from simulator.mine.telemetry import MineSimulator
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder=str(Path(__file__).resolve().parent.parent / "templates"))
 
 # Banco de dados em memória temporário para o histórico de métricas
 server_history = {}
 event_engine = OfflineEventEngine(os.getenv("REX_EVENT_STORE", "data/offline_events.json"))
 mine_simulator = MineSimulator()
+
+
+@app.route('/', methods=['GET'])
+def dashboard():
+    return render_template('index.html')
+
 
 # Configuração de Alertas (Podes trocar pelo Webhook real do teu bot do Telegram/WhatsApp)
 def send_infrastructure_alert(server_name, metric, value):

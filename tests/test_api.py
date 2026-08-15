@@ -16,6 +16,13 @@ def client(tmp_path, monkeypatch):
         yield test_client
 
 
+def test_dashboard_is_served_by_rex_core(client):
+    response = client.get('/')
+    assert response.status_code == 200
+    assert b'REX-OS' in response.data
+    assert b'Mine Intelligence' in response.data
+
+
 def test_create_list_and_sync_event(client):
     payload = {
         "event_type": "EQUIPMENT_INCIDENT",

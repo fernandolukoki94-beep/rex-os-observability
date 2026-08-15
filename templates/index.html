@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#081321" />
+  <title>REX Observability · Mine Intelligence</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; color: #e6f0f7; background: radial-gradient(circle at 15% 0%, #12334a 0, #081321 42%, #050b12 100%); }
+    main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 60px; }
+    header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+    .eyebrow { color: #68e0e9; text-transform: uppercase; letter-spacing: .18em; font-size: 11px; font-weight: 700; }
+    h1 { margin: 8px 0 6px; font-size: clamp(30px, 5vw, 52px); letter-spacing: -.04em; }
+    h2 { margin: 0; font-size: 18px; }
+    p { color: #91a6b5; line-height: 1.6; }
+    .subtitle { max-width: 680px; margin: 0; }
+    .status { display: inline-flex; gap: 9px; align-items: center; border: 1px solid #2a5365; border-radius: 999px; padding: 10px 14px; color: #9ceaf0; background: #0b2431; white-space: nowrap; font-size: 13px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #46e0a3; box-shadow: 0 0 14px #46e0a3; }
+    .dot.offline { background: #f7bd58; box-shadow: 0 0 14px #f7bd58; }
+    .grid { display: grid; gap: 16px; }
+    .metrics { grid-template-columns: repeat(4, 1fr); margin-bottom: 18px; }
+    .two { grid-template-columns: 1.35fr .8fr; }
+    .card { border: 1px solid rgba(162, 205, 221, .14); border-radius: 18px; padding: 20px; background: rgba(12, 28, 42, .78); box-shadow: 0 18px 60px rgba(0,0,0,.16); }
+    .metric-label { color: #91a6b5; font-size: 13px; }
+    .metric-value { margin-top: 14px; font-size: 32px; font-weight: 700; }
+    .metric-note { margin-top: 3px; color: #617988; font-size: 12px; }
+    .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+    .section-head p { margin: 5px 0 0; font-size: 12px; }
+    .telemetry { grid-template-columns: repeat(3, 1fr); }
+    .equipment { padding: 16px; border: 1px solid rgba(162,205,221,.1); border-radius: 14px; background: rgba(5,15,24,.5); }
+    .equipment-top { display: flex; justify-content: space-between; gap: 10px; }
+    .equipment-name { font-weight: 650; }
+    .pill { border-radius: 999px; padding: 4px 8px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+    .pill.ok { color: #65e2b0; background: rgba(70,224,163,.1); }
+    .pill.warn { color: #f7c86c; background: rgba(247,189,88,.12); }
+    .reading { margin-top: 25px; font-size: 27px; font-weight: 700; }
+    .reading small { color: #718997; font-size: 12px; font-weight: 500; }
+    .bar { height: 6px; margin-top: 12px; overflow: hidden; border-radius: 99px; background: #162d3c; }
+    .bar span { display: block; height: 100%; border-radius: inherit; background: #55dfe5; }
+    .bar span.warn { background: #f7bd58; }
+    .incident-list { display: grid; gap: 10px; }
+    .incident { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 14px; border: 1px solid rgba(162,205,221,.1); border-radius: 13px; background: rgba(5,15,24,.45); }
+    .incident strong { color: #f1f8fb; }
+    .incident small { display: block; margin-top: 5px; color: #78909e; }
+    .sync { color: #62e2b0; font-size: 12px; }
+    .failed { color: #f7bd58; }
+    button { cursor: pointer; border: 0; border-radius: 10px; padding: 11px 14px; color: #061018; background: #6ee7ed; font-weight: 750; }
+    button.secondary { color: #b4cad4; border: 1px solid #2a5365; background: transparent; }
+    button:disabled { cursor: wait; opacity: .55; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .evidence { margin-top: 18px; padding: 15px; border-left: 2px solid #68e0e9; background: rgba(104,224,233,.05); }
+    .evidence code { color: #8cecf2; font-size: 11px; word-break: break-all; }
+    footer { margin-top: 32px; color: #627987; font-size: 12px; }
+    @media (max-width: 850px) { header { align-items: flex-start; flex-direction: column; } .metrics, .two { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 560px) { main { width: min(100% - 22px, 1180px); padding-top: 22px; } .metrics, .two, .telemetry { grid-template-columns: 1fr; } .card { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <div class="eyebrow">REX-OS · Fernando Lucoco · Kolwezi, RDC</div>
+        <h1>Mine Intelligence</h1>
+        <p class="subtitle">Observabilidade operacional para ambientes de campo onde a conectividade pode falhar. Os dados de telemetria desta demonstração são sintéticos e não representam máquinas reais.</p>
+      </div>
+      <div class="status"><span id="status-dot" class="dot"></span><span id="connection-label">ONLINE · API CORE</span></div>
+    </header>
+
+    <section class="grid metrics" aria-label="Resumo operacional">
+      <div class="card"><div class="metric-label">Equipamentos monitorizados</div><div id="metric-equipment" class="metric-value">—</div><div class="metric-note">snapshot sintético</div></div>
+      <div class="card"><div class="metric-label">Eventos operacionais</div><div id="metric-events" class="metric-value">—</div><div class="metric-note">Evidence Chain local</div></div>
+      <div class="card"><div class="metric-label">Pendentes de sync</div><div id="metric-pending" class="metric-value">—</div><div class="metric-note">fila recuperável</div></div>
+      <div class="card"><div class="metric-label">Estado do transporte</div><div id="metric-sync" class="metric-value">READY</div><div class="metric-note">acknowledgement demonstrável</div></div>
+    </section>
+
+    <section class="grid two">
+      <div class="card">
+        <div class="section-head"><div><h2>Telemetry edge snapshot</h2><p>Mine simulator controlado · valores sintéticos</p></div><button class="secondary" id="refresh-btn">Actualizar</button></div>
+        <div id="telemetry-grid" class="grid telemetry"><div class="equipment">A carregar telemetria…</div></div>
+      </div>
+      <div class="card">
+        <div class="section-head"><div><h2>Operational control</h2><p>Fila offline e sincronização idempotente</p></div></div>
+        <div class="actions"><button id="sync-btn">Sincronizar pendentes</button><button class="secondary" id="demo-btn">Criar evento local</button></div>
+        <div class="evidence"><div class="eyebrow">Evidence Chain</div><p id="evidence-text">A aguardar eventos do Core.</p><code id="evidence-code">integrity fingerprint: —</code></div>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:16px">
+      <div class="section-head"><div><h2>Operational events</h2><p>Incidentes recebidos pelo contrato `/api/events`</p></div></div>
+      <div id="incident-list" class="incident-list"><div class="incident">A carregar eventos…</div></div>
+    </section>
+    <footer>REX Observability é um projecto de Fernando Lucoco. Esta versão é uma prova de conceito local/API-first; integração com sensores, identidade corporativa e operação industrial exige autorização e revisão de segurança.</footer>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const queueKey = "rex_observability_offline_queue_v1";
+    let telemetry = [];
+    let events = [];
+    const queued = () => JSON.parse(localStorage.getItem(queueKey) || "[]");
+    const setQueued = (items) => localStorage.setItem(queueKey, JSON.stringify(items));
+    const setConnection = (online) => { $("status-dot").classList.toggle("offline", !online); $("connection-label").textContent = online ? "ONLINE · API CORE" : "OFFLINE · LOCAL QUEUE"; };
+    const escapeHtml = (value) => String(value || "").replace(/[&<>\"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[c]));
+    function render() {
+      $("metric-equipment").textContent = telemetry.length;
+      $("metric-events").textContent = events.length + queued().length;
+      $("metric-pending").textContent = events.filter((item) => item.sync_status !== "SYNCED").length + queued().length;
+      $("telemetry-grid").innerHTML = telemetry.map((item) => `<div class="equipment"><div class="equipment-top"><span class="equipment-name">${escapeHtml(item.equipment_id)}</span><span class="pill ${item.vibration > 5 ? "warn" : "ok"}">${item.vibration > 5 ? "ALERT" : "NORMAL"}</span></div><div class="reading">${item.vibration}<small> mm/s vibration</small></div><div class="bar"><span class="${item.vibration > 5 ? "warn" : ""}" style="width:${Math.min(100, item.vibration * 12)}%"></span></div><small>${escapeHtml(item.location || "mine edge")}</small></div>`).join("") || "<div class=\"equipment\">Sem telemetria disponível.</div>";
+      $("incident-list").innerHTML = events.slice().reverse().slice(0, 12).map((item) => `<div class="incident"><div><strong>${escapeHtml(item.event_id)}</strong><small>${escapeHtml(item.description)} · ${escapeHtml(item.source_device)}</small></div><span class="${item.sync_status === "SYNCED" ? "sync" : "failed"}">${escapeHtml(item.sync_status)}</span></div>`).join("") || "<div class=\"incident\">Nenhum evento persistido no Core.</div>";
+      const latest = events[events.length - 1];
+      $("evidence-text").textContent = latest ? `${latest.event_id} · ${latest.evidence?.at(-1)?.event || latest.sync_status}` : "A aguardar eventos do Core.";
+      $("evidence-code").textContent = `integrity fingerprint: ${latest?.integrity_hash || "—"}`;
+    }
+    async function load() {
+      try {
+        const [telemetryResponse, eventsResponse] = await Promise.all([fetch("/api/telemetry/mine"), fetch("/api/events")]);
+        telemetry = (await telemetryResponse.json()).data || [];
+        events = (await eventsResponse.json()).data || [];
+        setConnection(true); render();
+      } catch { setConnection(false); render(); }
+    }
+    async function sync() {
+      $("sync-btn").disabled = true;
+      try { await fetch("/api/events/sync", { method: "POST" }); setQueued([]); await load(); }
+      catch { setConnection(false); }
+      finally { $("sync-btn").disabled = false; }
+    }
+    async function createLocalEvent() {
+      const event = { event_type: "EQUIPMENT_INCIDENT", description: "Vibração acima do padrão · evento registado no campo", source_device: "field-device-07", operator: "operator-demo-01", location: "Pit North", payload: { equipment_id: "PUMP-017", vibration: 6.2 } };
+      try { const response = await fetch("/api/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(event) }); if (!response.ok) throw new Error("API rejected event"); await load(); }
+      catch { const pending = queued(); pending.push({ ...event, event_id: `LOCAL-${Date.now()}`, sync_status: "PENDING" }); setQueued(pending); setConnection(false); render(); }
+    }
+    $("refresh-btn").addEventListener("click", load); $("sync-btn").addEventListener("click", sync); $("demo-btn").addEventListener("click", createLocalEvent); window.addEventListener("online", () => { setConnection(true); load(); }); window.addEventListener("offline", () => setConnection(false)); load();
+  </script>
+</body>
+</html>
