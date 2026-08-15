@@ -5,27 +5,31 @@
 
 > **Infrastructure Observability + Offline Edge + Operational Event Intelligence.**
 
-This repository is the **Python/API layer** of the REX Mine Intelligence portfolio by **Fernando Lucoco**. The complementary React/Vite field dashboard and offline visual demonstration are available in [`luko-memoryos`](https://github.com/fernandolukoki94-beep/luko-memoryos), with the hosted interface at [rex-mine-intelligence-web.vercel.app](https://rex-mine-intelligence-web.vercel.app/).
+REX-OS Mine Intelligence é o portfólio único de **Fernando Lucoco**. Este mesmo repositório contém o Core Python/Flask, os contratos de eventos operacionais, o simulador de telemetria, o dashboard web e a demonstração offline-first. Não existe um segundo repositório necessário para compreender ou executar o projecto.
 
-| Portfolio layer | Public link | Scope |
+| Acesso | Link | Conteúdo |
 |---|---|---|
-| Python Core and API | [rex-os-observability](https://github.com/fernandolukoki94-beep/rex-os-observability) | Operational events, offline engine, telemetry simulator and tests |
-| React field dashboard | [luko-memoryos](https://github.com/fernandolukoki94-beep/luko-memoryos) | REX Operations UI, IndexedDB demo and original MemoryOS pages |
-| Hosted visual demo | [Open REX Mine Intelligence](https://rex-mine-intelligence-web.vercel.app/) | Free-tier portfolio deployment; synthetic data only |
+| Código e documentação | [rex-os-observability](https://github.com/fernandolukoki94-beep/rex-os-observability) | Aplicação completa, arquitectura, testes e roadmap |
+| Dashboard publicado | [Abrir REX Mine Intelligence](https://rex-mine-intelligence-web.vercel.app/) | Interface operacional servida pelo Flask deste repositório |
+| API mineira | [`/api/telemetry/mine`](https://rex-mine-intelligence-web.vercel.app/api/telemetry/mine) | Snapshot sintético de equipamentos |
 
-REX-OS is a lightweight distributed observability system evolving from infrastructure telemetry into an industrial edge proof of concept. The original infrastructure routes remain intact; the `feature/mine-intelligence-v1` branch adds a separate Python domain layer for offline operational events, evidence timelines and deterministic mine telemetry.
+REX-OS é um sistema de observabilidade distribuída que evolui de telemetria de infraestrutura para inteligência operacional edge. As rotas de infraestrutura originais permanecem intactas; a extensão `feature/mine-intelligence-v1` acrescenta eventos operacionais offline, Evidence Chain, telemetria mineira determinística e uma interface visual no próprio Core.
 
 ## Visual access
 
-The Python extension is an API-first system and does not yet ship a hosted web dashboard. Run the Core locally and inspect the JSON endpoints with a browser or `curl`:
+O dashboard web é servido pela rota `/` do Flask e consome os contratos do mesmo Core. A aplicação apresenta claramente que os dados são sintéticos e que a integração com sensores reais exige autorização e revisão de segurança. Para executar localmente:
+
+```bash
+python3 -m core.rex_core
+```
+
+Depois abra `http://127.0.0.1:5000/`. Os endpoints JSON continuam disponíveis para integração e testes:
 
 ```text
 http://127.0.0.1:5000/api/telemetry/mine
 http://127.0.0.1:5000/api/telemetry/mine/pump-sequence
 http://127.0.0.1:5000/api/events
 ```
-
-A visual dashboard belongs to a later layer. This branch intentionally proves the event engine and contracts first instead of publishing a fake industrial UI.
 
 ## What changed in `feature/mine-intelligence-v1`
 
@@ -109,6 +113,9 @@ rex-os-observability/
 ├── simulator/mine/
 │   └── telemetry.py
 ├── agent/agent_mock.py
+├── api/index.py
+├── templates/index.html
+├── vercel.json
 ├── tests/
 │   ├── test_mine_intelligence.py
 │   └── test_api.py
@@ -119,11 +126,11 @@ rex-os-observability/
     └── MINE_INTELLIGENCE_AUDIT.md
 ```
 
-The repository documentation predates the current minimal checkout and advertises components that are not present in this snapshot. `docs/MINE_INTELLIGENCE_AUDIT.md` records that drift explicitly. This extension keeps the implementation additive and avoids pretending that an absent TUI, database or production authentication layer already exists.
+The repository keeps the implementation additive: the original infrastructure routes remain available, while `templates/index.html` provides the visual dashboard and `api/index.py` exposes the same Flask application to Vercel. A production database, authentication layer and industrial gateway are intentionally not claimed as present.
 
 ## Next engineering step
 
-The next safe step is a field-facing adapter or web dashboard consuming these contracts. It should be developed after the Python event engine has been reviewed, not by expanding `core/rex_core.py` into a monolith. Production work would still require authentication, durable database design, conflict resolution, observability of the sync process, security review and authorised integration with real equipment.
+The next safe step is to strengthen this single-repository application with an explicit edge adapter boundary, durable production storage, conflict resolution, authenticated acknowledgement and observability of the sync process. The current dashboard remains a free-tier proof of concept with synthetic data; authorised integration with real equipment requires a separate security and operational review.
 
 ## License
 
