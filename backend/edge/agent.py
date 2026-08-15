@@ -11,6 +11,8 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .sqlite_queue import SQLiteQueue
+
 
 @dataclass
 class EdgeAgent:
@@ -19,8 +21,17 @@ class EdgeAgent:
     sender: Callable[[dict], bool] | None = None
     queue: list[dict] = field(default_factory=list)
     queue_path: str | None = None
+    _sqlite_store: SQLiteQueue | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.queue_path and Path(self.queue_path).suffix.lower() in {".sqlite", ".db"}:
+            self._sqlite_store = SQLiteQueue(self.queue_path)
+            initial_queue = list(self.queue)
+            if not self._sqlite_store.depth() and initial_queue:
+                for record in initial_queue:
+                    self._sqlite_store.append(record)
+            self.queue = self._sqlite_store.all()
+            return
         if self.queue_path:
             path = Path(self.queue_path)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -31,6 +42,9 @@ class EdgeAgent:
                     self.queue = []
 
     def _save(self) -> None:
+        if self._sqlite_store is not None:
+            self.queue = self._sqlite_store.all()
+            return
         if not self.queue_path:
             return
         path = Path(self.queue_path)
@@ -41,11 +55,25 @@ class EdgeAgent:
     def collect(self) -> dict:
         sample = self.source.sample() if hasattr(self.source, "sample") else self.source()
         record = {"device_id": self.device_id, "sample": sample}
-        self.queue.append(record)
-        self._save()
+        if self._sqlite_store is not None:
+            self._sqlite_store.append(record)
+            self.queue = self._sqlite_store.all()
+        else:
+            self.queue.append(record)
+            self._save()
         return record
 
     def sync_once(self) -> bool:
+        if self._sqlite_store is not None:
+            first = self._sqlite_store.peek()
+            if first is None:
+                self.queue = []
+                return True
+            if self.sender is None or not self.sender(first):
+                return False
+            self._sqlite_store.pop()
+            self.queue = self._sqlite_store.all()
+            return True
         if not self.queue:
             return True
         if self.sender is None:
@@ -57,9 +85,10 @@ class EdgeAgent:
         return False
 
     def health(self) -> dict:
+        queue_depth = self._sqlite_store.depth() if self._sqlite_store is not None else len(self.queue)
         return {
             "device_id": self.device_id,
-            "queue_depth": len(self.queue),
+            "queue_depth": queue_depth,
             "transport": "injected" if self.sender else "offline-only",
             "status": "healthy" if self.sender or not self.queue else "degraded",
         }
