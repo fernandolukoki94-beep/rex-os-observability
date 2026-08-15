@@ -28,6 +28,7 @@ type EvidenceEntry = { at: string; event: string; detail: string };
 type Incident = {
   id: string;
   eventId?: string;
+  serverAck?: boolean;
   eventType?: "EQUIPMENT_INCIDENT";
   equipment: string;
   area: string;
@@ -145,10 +146,40 @@ function formatTime() {
   }).format(new Date());
 }
 
+type ApiEvent = { event_id: string; sync_status: string; integrity_hash?: string; evidence?: { at: string; event: string; detail: string }[] };
+
+async function postOperationalEvent(incident: Incident): Promise<ApiEvent> {
+  const response = await fetch("/api/events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      event_id: incident.eventId,
+      event_type: incident.eventType || "EQUIPMENT_INCIDENT",
+      description: incident.description,
+      source_device: incident.deviceId || "field-device-07",
+      operator: incident.operatorId || "operator-demo-01",
+      location: incident.location || incident.area,
+      created_at: incident.createdAtISO,
+      payload: { equipment: incident.equipment, category: incident.category, priority: incident.priority },
+    }),
+  });
+  if (!response.ok) throw new Error(`API /events respondeu ${response.status}`);
+  const payload = (await response.json()) as { data: ApiEvent };
+  return payload.data;
+}
+
+async function syncServerEvents(): Promise<ApiEvent[]> {
+  const response = await fetch("/api/events/sync", { method: "POST" });
+  if (!response.ok) throw new Error(`API /events/sync respondeu ${response.status}`);
+  const payload = (await response.json()) as { synced: ApiEvent[] };
+  return payload.synced || [];
+}
+
 export default function RexOperations() {
   const [incidents, setIncidents] = useState<Incident[]>(readIncidents);
   const [isOnline, setIsOnline] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [apiState, setApiState] = useState<"checking" | "connected" | "unavailable">("checking");
   const [showForm, setShowForm] = useState(false);
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
   const [showSyncPanel, setShowSyncPanel] = useState(false);
@@ -165,6 +196,15 @@ export default function RexOperations() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(incidents));
   }, [incidents]);
 
+  useEffect(() => {
+    fetch("/api/telemetry/mine")
+      .then((response) => {
+        if (!response.ok) throw new Error("API unavailable");
+        setApiState("connected");
+      })
+      .catch(() => setApiState("unavailable"));
+  }, []);
+
   const pendingCount = incidents.filter((incident) => incident.syncStatus !== "synced").length;
   const openCount = incidents.filter((incident) => incident.status !== "resolved").length;
   const criticalCount = incidents.filter((incident) => incident.priority === "critical").length;
@@ -178,20 +218,31 @@ export default function RexOperations() {
     [],
   );
 
-  const syncIncidents = () => {
-    if (!isOnline || pendingCount === 0) return;
-    const total = pendingCount;
+  const syncIncidents = async (additionalIncident?: Incident) => {
+    const candidates = [...incidents.filter((incident) => incident.syncStatus !== "synced"), ...(additionalIncident ? [additionalIncident] : [])].filter((incident, index, items) => items.findIndex((item) => item.eventId === incident.eventId) === index);
+    if (!isOnline || candidates.length === 0 || isSyncing) return;
+    const total = candidates.length;
     setIsSyncing(true);
     setShowSyncPanel(true);
     setSyncSteps([`${total} eventos encontrados`]);
-      setIncidents((current) => current.map((incident) => (incident.syncStatus !== "synced" ? { ...incident, syncStatus: "syncing", history: [...(incident.history || []), { at: formatTime(), event: "SYNC STARTED", detail: "Connectivity available" }] } : incident)));
-    window.setTimeout(() => setSyncSteps([`${total} eventos encontrados`, `${total} eventos validados`]), 220);
-    window.setTimeout(() => setSyncSteps([`${total} eventos encontrados`, `${total} eventos validados`, `${total} eventos enviados`]), 440);
-    window.setTimeout(() => {
-      setIncidents((current) => current.map((incident) => (incident.syncStatus === "syncing" ? { ...incident, syncStatus: "synced", history: [...(incident.history || []), { at: formatTime(), event: "VALIDATED", detail: "Event payload accepted" }, { at: formatTime(), event: "SENT", detail: "Local sync transport" }, { at: formatTime(), event: "ACKNOWLEDGED", detail: "Demonstração local" }, { at: formatTime(), event: "SYNCHRONIZED", detail: "Event is available in REX Operations" }] } : incident)));
-      setSyncSteps([`${total} eventos encontrados`, `${total} eventos validados`, `${total} eventos enviados`, `${total} eventos confirmados`, "0 pendentes"]);
+    setIncidents((current) => current.map((incident) => (incident.syncStatus !== "synced" ? { ...incident, syncStatus: "syncing", history: [...(incident.history || []), { at: formatTime(), event: "SYNC STARTED", detail: "Connectivity available" }] } : incident)));
+    try {
+      setSyncSteps([`${total} eventos encontrados`, `${total} eventos validados`]);
+      for (const incident of candidates) {
+        if (incident.serverAck) continue;
+        const ack = await postOperationalEvent(incident);
+        setApiState("connected");
+        setIncidents((current) => current.map((item) => item.eventId === incident.eventId ? { ...item, syncStatus: "synced", serverAck: true, integrityHash: ack.integrity_hash || item.integrityHash, history: [...(item.history || []), { at: formatTime(), event: "ACKNOWLEDGED", detail: "Flask API accepted event" }, ...(ack.evidence || []).map((entry) => ({ at: entry.at, event: entry.event, detail: entry.detail }))] } : item));
+      }
+      const synced = await syncServerEvents();
+      setSyncSteps([`${total} eventos encontrados`, `${total} eventos validados`, `${total} eventos enviados`, `${synced.length || total} eventos confirmados`, "0 pendentes"]);
+    } catch (error) {
+      setApiState("unavailable");
+      setIncidents((current) => current.map((incident) => incident.syncStatus === "syncing" ? { ...incident, syncStatus: "failed", history: [...(incident.history || []), { at: formatTime(), event: "SYNC FAILED", detail: error instanceof Error ? error.message : "Transport unavailable" }] } : incident));
+      setSyncSteps([`${total} eventos encontrados`, `${total} eventos validados`, "Falha no transporte", "Retry disponível"]);
+    } finally {
       setIsSyncing(false);
-    }, 850);
+    }
   };
 
   const updateStatus = (id: string, status: IncidentStatus) => {
@@ -213,7 +264,7 @@ export default function RexOperations() {
       priority: form.priority,
       status: "open",
       eventType: "EQUIPMENT_INCIDENT",
-      syncStatus: isOnline ? "synced" : "pending",
+      syncStatus: "pending",
       createdAt: `Hoje, ${formatTime()}`,
       createdAtISO: createdAt.toISOString(),
       deviceId: "field-device-07",
@@ -225,10 +276,13 @@ export default function RexOperations() {
         { at: formatTime(), event: "EVENT CREATED", detail: `EQUIPMENT_INCIDENT · ${eventId}` },
         { at: formatTime(), event: isOnline ? "LOCAL STORAGE" : "LOCAL STORAGE", detail: `Connectivity ${isOnline ? "ONLINE" : "OFFLINE"}` },
         { at: formatTime(), event: "HASH GENERATED", detail: "Integrity fingerprint · alteração detectável" },
-        ...(isOnline ? [{ at: formatTime(), event: "ACKNOWLEDGED", detail: "Demonstração local" }] : []),
+        { at: formatTime(), event: "SYNC_PENDING", detail: isOnline ? "A aguardar confirmação Flask" : "Connectivity OFFLINE" },
       ],
     };
     setIncidents((current) => [incident, ...current]);
+    if (isOnline) {
+      window.setTimeout(() => { void syncIncidents(incident); }, 0);
+    }
     setForm((current) => ({ ...current, description: "" }));
     setShowForm(false);
   };
@@ -256,7 +310,7 @@ export default function RexOperations() {
               {isOnline ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
               <span><span className="block text-[10px] uppercase tracking-widest opacity-60">Connectivity</span>{isOnline ? "ONLINE" : "OFFLINE"}</span>
             </button>
-            <button type="button" onClick={syncIncidents} disabled={!isOnline || pendingCount === 0 || isSyncing} className="flex items-center gap-2 rounded-lg bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-40">
+            <button type="button" onClick={() => { void syncIncidents(); }} disabled={!isOnline || pendingCount === 0 || isSyncing} className="flex items-center gap-2 rounded-lg bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-40">
               <RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />
               {isSyncing ? "A sincronizar…" : `Sincronizar${pendingCount ? ` (${pendingCount})` : ""}`}
             </button>

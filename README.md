@@ -22,13 +22,14 @@ REX-OS é um sistema de observabilidade distribuída que evolui de telemetria de
 
 ## Visual access
 
-O dashboard web é servido pela rota `/` do Flask e consome os contratos do mesmo Core. A aplicação apresenta claramente que os dados são sintéticos e que a integração com sensores reais exige autorização e revisão de segurança. Para executar localmente:
+O produto tem duas superfícies no mesmo repositório: o fallback dashboard Flask em `/` e o Operations Center React em `frontend/`. O frontend usa um proxy Vite local para falar com o mesmo contrato Flask; em produção, o routing Vercel encaminha `/api` para a função Python. A aplicação apresenta claramente que os dados são sintéticos e que a integração com sensores reais exige autorização e revisão de segurança. Para executar localmente, inicie o backend e o frontend em terminais separados:
 
 ```bash
 PYTHONPATH=. python3 -m backend.core.rex_core
+cd frontend && pnpm install && pnpm dev
 ```
 
-Depois abra `http://127.0.0.1:5000/`. Os endpoints JSON continuam disponíveis para integração e testes:
+Depois abra `http://127.0.0.1:5173/` para o frontend ou `http://127.0.0.1:5000/` para o fallback Flask. Os endpoints JSON continuam disponíveis para integração e testes:
 
 ```text
 http://127.0.0.1:5000/api/telemetry/mine
@@ -59,9 +60,9 @@ The simulator generates synthetic samples for `PUMP-017`, `TRUCK-021`, `CONVEYOR
 |---|---|---|
 | `POST` | `/api/monitor/v1/update` | Existing infrastructure telemetry ingestion |
 | `GET` | `/api/monitor/v1/status` | Existing latest-node status view |
-| `POST` | `/api/events` | Create and locally queue an Operational Event |
+| `POST` | `/api/events` | Create, persist and queue an Operational Event; returns a server ACK payload |
 | `GET` | `/api/events` | List persisted events and Evidence Chains |
-| `POST` | `/api/events/sync` | Run the injected local Core acknowledgement flow |
+| `POST` | `/api/events/sync` | Reconcile pending events through the Flask Core and return `SYNCED` events |
 | `GET` | `/api/telemetry/mine` | Return one synthetic sample per mine equipment item |
 | `GET` | `/api/telemetry/mine/pump-sequence` | Return the controlled vibration anomaly sequence |
 
@@ -81,6 +82,13 @@ curl -X POST http://127.0.0.1:5000/api/events \
 
 curl -X POST http://127.0.0.1:5000/api/events/sync
 curl http://127.0.0.1:5000/api/events
+```
+
+The React Operations Center follows the same contract: it stores the event locally first, attempts `POST /api/events` when connectivity is available, records the Flask acknowledgement in the Evidence Chain, and marks the event `SYNCED`. If the API is unavailable, the event remains retryable in the local queue.
+
+```text
+Browser → local queue → POST /api/events → Flask Core → ACK → SYNCED
+                   └── offline / transport error → retryable queue
 ```
 
 ## Run locally
