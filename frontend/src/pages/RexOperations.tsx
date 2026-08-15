@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { nextDurableEventId, persistDurableEvents, readDurableEvents } from "../lib/rexOfflineStore";
 import {
   Activity,
   AlertTriangle,
@@ -47,16 +48,6 @@ type Incident = {
   evidence?: EvidenceEntry[];
   history?: EvidenceEntry[];
 };
-
-const STORAGE_KEY = "rex_incidents_v1";
-const EVENT_SEQUENCE_KEY = "rex_event_sequence_v1";
-
-function nextEventId() {
-  const current = Number(window.localStorage.getItem(EVENT_SEQUENCE_KEY) || "184");
-  const next = current + 1;
-  window.localStorage.setItem(EVENT_SEQUENCE_KEY, String(next));
-  return `REX-EVT-${new Date().getFullYear()}-${String(next).padStart(6, "0")}`;
-}
 
 async function makeIntegrityHash(value: string) {
   if (!window.crypto?.subtle) return "demo-integrity-unavailable";
@@ -130,15 +121,6 @@ const statusLabel: Record<IncidentStatus, string> = {
   resolved: "Resolvido",
 };
 
-function readIncidents(): Incident[] {
-  try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    return stored ? (JSON.parse(stored) as Incident[]) : seedIncidents;
-  } catch {
-    return seedIncidents;
-  }
-}
-
 function formatTime() {
   return new Intl.DateTimeFormat("pt-PT", {
     hour: "2-digit",
@@ -176,7 +158,8 @@ async function syncServerEvents(): Promise<ApiEvent[]> {
 }
 
 export default function RexOperations() {
-  const [incidents, setIncidents] = useState<Incident[]>(readIncidents);
+  const [incidents, setIncidents] = useState<Incident[]>(seedIncidents);
+  const [isHydrated, setIsHydrated] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [apiState, setApiState] = useState<"checking" | "connected" | "unavailable">("checking");
@@ -193,8 +176,15 @@ export default function RexOperations() {
   });
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(incidents));
-  }, [incidents]);
+    void readDurableEvents<Incident>(seedIncidents).then((stored) => {
+      setIncidents(stored);
+      setIsHydrated(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (isHydrated) void persistDurableEvents(incidents);
+  }, [incidents, isHydrated]);
 
   useEffect(() => {
     fetch("/api/telemetry/mine")
@@ -252,7 +242,7 @@ export default function RexOperations() {
   const createIncident = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const createdAt = new Date();
-    const eventId = nextEventId();
+    const eventId = await nextDurableEventId();
     const description = form.description.trim() || "Ocorrência registada pelo operador em campo.";
     const incident: Incident = {
       id: `INC-${String(43 + incidents.length).padStart(4, "0")}`,

@@ -10,7 +10,9 @@ def client(tmp_path, monkeypatch):
     from backend.core import rex_core
 
     engine = rex_core.OfflineEventEngine(str(tmp_path / "events.json"))
+    telemetry = rex_core.JsonTelemetryRepository(str(tmp_path / "telemetry.json"))
     monkeypatch.setattr(rex_core, "event_engine", engine)
+    monkeypatch.setattr(rex_core, "telemetry_repository", telemetry)
     app.config.update({"TESTING": True})
     with app.test_client() as test_client:
         yield test_client
@@ -46,6 +48,32 @@ def test_create_list_and_sync_event(client):
     assert synced.status_code == 200
     assert len(synced.get_json()["synced"]) == 1
     assert synced.get_json()["synced"][0]["sync_status"] == "SYNCED"
+
+
+def test_duplicate_event_id_is_idempotent(client):
+    payload = {
+        "event_id": "REX-IDEMPOTENCY-001",
+        "event_type": "EQUIPMENT_INCIDENT",
+        "description": "Evento repetido de teste",
+        "source_device": "field-device-07",
+        "operator": "operator-demo-01",
+        "location": "Pit North",
+        "payload": {"equipment_id": "PUMP-017"},
+    }
+    first = client.post("/api/events", json=payload)
+    second = client.post("/api/events", json=payload)
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert second.get_json()["idempotent"] is True
+    assert len(client.get("/api/events").get_json()["data"]) == 1
+
+
+def test_telemetry_history_persists_and_reports_latest(client, tmp_path):
+    update = client.post("/api/monitor/v1/update", json={"server_name": "edge-01", "cpu": 91, "ram": 44})
+    assert update.status_code == 200
+    status = client.get("/api/monitor/v1/status")
+    assert status.get_json()["edge-01"]["cpu"] == 91
+    assert (tmp_path / "telemetry.json").exists()
 
 
 def test_event_validation_and_mine_telemetry(client):

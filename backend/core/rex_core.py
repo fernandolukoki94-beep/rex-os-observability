@@ -1,16 +1,33 @@
 from flask import Flask, jsonify, render_template, request
+import hmac
 import os
 import time
 import uuid
 from pathlib import Path
 
-from backend.core.services import OfflineEventEngine, OperationalEvent
+from backend.core.services import (
+    JsonTelemetryRepository,
+    OfflineEventEngine,
+    OperationalEvent,
+)
 from backend.simulator.mine.telemetry import MineSimulator
 
 app = Flask(__name__, template_folder=str(Path(__file__).resolve().parent.parent.parent / "templates"))
 
-# Banco de dados em memória temporário para o histórico de métricas
-server_history = {}
+
+@app.before_request
+def enforce_optional_api_key():
+    """Require X-REX-API-Key only when configured by the deployment."""
+    configured_key = os.getenv("REX_API_KEY")
+    if configured_key and request.path.startswith("/api"):
+        supplied_key = request.headers.get("X-REX-API-Key", "")
+        if not hmac.compare_digest(supplied_key, configured_key):
+            return jsonify({"status": "error", "message": "API key required"}), 401
+    return None
+
+telemetry_repository = JsonTelemetryRepository(
+    os.getenv("REX_TELEMETRY_STORE", "data/telemetry_history.json")
+)
 event_engine = OfflineEventEngine(os.getenv("REX_EVENT_STORE", "data/offline_events.json"))
 mine_simulator = MineSimulator()
 
@@ -36,10 +53,11 @@ def receive_metrics():
     cpu = data.get("cpu", 0)
     ram = data.get("ram", 0)
     
-    # Armazena o histórico do nó
-    if server_name not in server_history:
-        server_history[server_name] = []
-    server_history[server_name].append({"timestamp": time.time(), "cpu": cpu, "ram": ram})
+    # Persiste o histórico do nó através de uma boundary substituível.
+    telemetry_repository.append(
+        server_name,
+        {"timestamp": time.time(), "cpu": cpu, "ram": ram},
+    )
     
     # Lógica de Deteção de Anomalias (Regra básica de Limiar)
     if cpu > 85:
@@ -58,6 +76,14 @@ def create_operational_event():
         return jsonify({"status": "error", "message": "Missing fields", "fields": missing}), 400
 
     event_id = data.get("event_id") or f"REX-EVT-{uuid.uuid4().hex[:12].upper()}"
+    existing = event_engine.get(event_id)
+    if existing is not None:
+        return jsonify({
+            "status": "success",
+            "idempotent": True,
+            "data": existing.to_dict(),
+        }), 200
+
     event = OperationalEvent.create(
         event_id=event_id,
         event_type=data["event_type"],
@@ -101,11 +127,7 @@ def get_pump_sequence():
 @app.route('/api/monitor/v1/status', methods=['GET'])
 def get_status():
     """Rota que o teu Dashboard TUI vai consumir para pintar a tela"""
-    active_nodes = {}
-    for node, metrics in server_history.items():
-        if metrics:
-            active_nodes[node] = metrics[-1] # Pega a última métrica recebida
-    return jsonify(active_nodes)
+    return jsonify(telemetry_repository.latest_by_server())
 
 if __name__ == '__main__':
     # Roda o servidor na porta local 5000 do Termux

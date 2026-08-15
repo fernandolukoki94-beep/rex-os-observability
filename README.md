@@ -165,3 +165,14 @@ The next safe step is to strengthen this single-repository application with an e
 MIT. See [`LICENSE`](LICENSE).
 
 **Author:** [Fernando Lukoki](https://github.com/fernandolukoki94-beep)
+
+
+## Novas salvaguardas de engenharia
+
+A camada backend inclui agora `JsonTelemetryRepository`, uma boundary de persistência atómica para o histórico de infraestrutura. O adaptador JSON mantém a demonstração sem custos e pode ser substituído por PostgreSQL sem alterar as rotas Flask. O endpoint de eventos garante idempotência por `event_id`: a primeira submissão devolve `201`, enquanto uma repetição devolve `200` com `idempotent: true` e não duplica o evento.
+
+No frontend, a fila operacional usa IndexedDB como armazenamento primário, com fallback para `localStorage` em browsers sem IndexedDB. Esta decisão preserva o funcionamento da demonstração e aproxima o fluxo do modelo `IndexedDB → local event store → queue → API` recomendado para a evolução do produto.
+
+O Flask suporta uma API key opcional através da variável de ambiente `REX_API_KEY` e do cabeçalho `X-REX-API-Key`. Quando a variável não existe, o modo local continua acessível; quando é configurada no deployment, as rotas `/api` exigem autenticação básica de serviço. Isto é uma salvaguarda POC e não substitui autenticação de operador, RBAC, gestão de segredos ou auditoria de produção.
+
+O directório `backend/edge/` define o boundary entre uma fonte de telemetria e o core REX. A implementação actual é `SyntheticTelemetryAdapter`; MQTT, OPC-UA e Modbus permanecem adaptadores futuros que só devem ser activados com gateway autorizado e revisão de segurança.
