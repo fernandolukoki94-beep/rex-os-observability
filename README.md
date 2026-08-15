@@ -15,6 +15,9 @@ Este é o repositório principal e completo de **Fernando Lucoco** para o produt
 |---|---|---|
 | Código e documentação | [rex-os-observability](https://github.com/fernandolukoki94-beep/rex-os-observability) | Monorepo oficial do produto REX |
 | Projecto de origem | [Luko MemoryOS](https://github.com/fernandolukoki94-beep/luko-memoryos) | Fundação React/Vite histórica, preservada separadamente |
+| Dashboard live | [REX Mine Intelligence](https://rex-observability-main-git-main-fernandolukoki94-beeps-projects.vercel.app/) | Deployment Vercel do branch `main` |
+| Health live | [`/api/health`](https://rex-observability-main-git-main-fernandolukoki94-beeps-projects.vercel.app/api/health) | Estado operacional público do Flask |
+| Metrics live | [`/metrics`](https://rex-observability-main-git-main-fernandolukoki94-beeps-projects.vercel.app/metrics) | Métricas Prometheus públicas |
 | Dashboard local | [`http://127.0.0.1:5173`](http://127.0.0.1:5173) | Frontend React/Vite oficial durante o desenvolvimento |
 | API local | [`http://127.0.0.1:5000`](http://127.0.0.1:5000) | Backend Flask e contratos operacionais |
 
