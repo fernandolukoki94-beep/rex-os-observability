@@ -134,3 +134,5 @@ dmypy.json
 config.local.yaml
 logs/
 *.pid
+**/node_modules/
+**/dist/
