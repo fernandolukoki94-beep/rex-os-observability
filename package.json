@@ -1,0 +1,10 @@
+{
+  "name": "rex-os-observability",
+  "private": true,
+  "version": "1.0.0",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "pnpm --filter rex-mine-intelligence-frontend build",
+    "check": "pnpm --filter rex-mine-intelligence-frontend exec tsc --noEmit"
+  }
+}
