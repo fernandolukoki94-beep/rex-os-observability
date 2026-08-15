@@ -5,6 +5,14 @@
 
 > **Infrastructure Observability + Offline Edge + Operational Event Intelligence.**
 
+This repository is the **Python/API layer** of the REX Mine Intelligence portfolio by **Fernando Lucoco**. The complementary React/Vite field dashboard and offline visual demonstration are available in [`luko-memoryos`](https://github.com/fernandolukoki94-beep/luko-memoryos), with the hosted interface at [rex-mine-intelligence-web.vercel.app](https://rex-mine-intelligence-web.vercel.app/).
+
+| Portfolio layer | Public link | Scope |
+|---|---|---|
+| Python Core and API | [rex-os-observability](https://github.com/fernandolukoki94-beep/rex-os-observability) | Operational events, offline engine, telemetry simulator and tests |
+| React field dashboard | [luko-memoryos](https://github.com/fernandolukoki94-beep/luko-memoryos) | REX Operations UI, IndexedDB demo and original MemoryOS pages |
+| Hosted visual demo | [Open REX Mine Intelligence](https://rex-mine-intelligence-web.vercel.app/) | Free-tier portfolio deployment; synthetic data only |
+
 REX-OS is a lightweight distributed observability system evolving from infrastructure telemetry into an industrial edge proof of concept. The original infrastructure routes remain intact; the `feature/mine-intelligence-v1` branch adds a separate Python domain layer for offline operational events, evidence timelines and deterministic mine telemetry.
 
 ## Visual access
