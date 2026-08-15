@@ -10,6 +10,10 @@ from typing import Callable, Iterable, List, Optional
 from .events import OperationalEvent, SyncStatus
 
 
+class EventConflictError(ValueError):
+    """Raised when an event ID is reused with a different integrity hash."""
+
+
 class OfflineEventEngine:
     """Persist events locally and synchronise them through an injected sender."""
 
@@ -38,8 +42,13 @@ class OfflineEventEngine:
         temporary.replace(self.store_path)
 
     def enqueue(self, event: OperationalEvent) -> OperationalEvent:
-        if any(existing.event_id == event.event_id for existing in self._events):
-            return next(existing for existing in self._events if existing.event_id == event.event_id)
+        existing = next((item for item in self._events if item.event_id == event.event_id), None)
+        if existing is not None:
+            if existing.integrity_hash != event.integrity_hash:
+                raise EventConflictError(event.event_id)
+            return existing
+        previous_hash = self._events[-1].chain_hash if self._events else None
+        event.rebuild_chain_hash(previous_hash)
         event.transition(SyncStatus.PENDING, "Waiting for connectivity")
         self._events.append(event)
         self._save()
@@ -79,6 +88,14 @@ class OfflineEventEngine:
             self._save()
             results.append(event)
         return results
+
+    def replay_dead_letter(self, event_id: str) -> OperationalEvent:
+        event = self.get(event_id)
+        if event is None:
+            raise KeyError(event_id)
+        event.replay()
+        self._save()
+        return event
 
     def replace(self, events: Iterable[OperationalEvent]) -> None:
         self._events = list(events)

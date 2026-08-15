@@ -141,3 +141,96 @@ def test_optional_api_key_rejects_missing_and_wrong_keys(client, monkeypatch):
     assert missing.status_code == 401
     assert wrong.status_code == 401
     assert correct.status_code == 200
+
+
+def test_prometheus_metrics_expose_rex_runtime_signals(client):
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert response.mimetype == "text/plain"
+    body = response.get_data(as_text=True)
+    assert "# TYPE rex_api_requests_total counter" in body
+    assert "rex_queue_depth 0" in body
+    assert "rex_queue_age_seconds 0.0" in body
+    assert "rex_dead_letter_events_total 0" in body
+
+
+def test_health_reports_queue_age_for_pending_event(client):
+    payload = {
+        "event_id": "REX-QUEUE-AGE-001",
+        "event_type": "EQUIPMENT_INCIDENT",
+        "description": "Evento pendente para teste de idade",
+        "source_device": "field-device-07",
+        "operator": "operator-demo-01",
+        "location": "Pit North",
+        "created_at": "2020-01-01T00:00:00+00:00",
+    }
+    assert client.post("/api/events", json=payload).status_code == 201
+    health = client.get("/api/health").get_json()
+    assert health["components"]["queue"]["depth"] == 1
+    assert health["components"]["queue"]["age_seconds"] > 0
+    metrics = client.get("/metrics").get_data(as_text=True)
+    assert "rex_queue_depth 1" in metrics
+    assert "rex_queue_age_seconds " in metrics
+
+
+
+def test_dead_letter_replay_requires_supervised_role_and_requeues(client, monkeypatch):
+    monkeypatch.setenv("REX_RBAC_ENFORCED", "1")
+    payload = {
+        "event_id": "REX-REPLAY-001",
+        "event_type": "EQUIPMENT_INCIDENT",
+        "description": "Evento para replay supervisionado",
+        "source_device": "field-device-07",
+        "operator": "operator-demo-01",
+        "location": "Pit North",
+    }
+    headers = {"X-REX-Role": "SUPERVISOR", "X-REX-Actor": "fernando"}
+    assert client.post("/api/events", json=payload, headers=headers).status_code == 201
+    from backend.core import rex_core
+    event = rex_core.event_engine.get("REX-REPLAY-001")
+    assert event is not None
+    event.retry_count = 3
+    event.dead_letter = True
+    event.sync_status = rex_core.OperationalEvent.from_dict(event.to_dict()).sync_status
+    rex_core.event_engine.replace([event])
+    denied = client.post("/api/events/dead-letter/replay", json={"event_id": "REX-REPLAY-001"}, headers={"X-REX-Role": "VIEWER"})
+    assert denied.status_code == 403
+    replayed = client.post("/api/events/dead-letter/replay", json={"event_id": "REX-REPLAY-001"}, headers=headers)
+    assert replayed.status_code == 200
+    assert replayed.get_json()["data"]["sync_status"] == "PENDING"
+    assert replayed.get_json()["data"]["dead_letter"] is False
+    assert replayed.get_json()["data"]["evidence"][-1]["event"] == "DEAD_LETTER_REPLAYED"
+
+
+def test_same_event_id_with_different_payload_is_conflict(client):
+    payload = {
+        "event_id": "REX-CONFLICT-001",
+        "event_type": "EQUIPMENT_INCIDENT",
+        "description": "Primeiro conteúdo",
+        "source_device": "field-device-07",
+        "operator": "operator-demo-01",
+        "location": "Pit North",
+        "payload": {"vibration": 4.2},
+    }
+    assert client.post("/api/events", json=payload).status_code == 201
+    conflict = client.post("/api/events", json={**payload, "description": "Conteúdo adulterado"})
+    assert conflict.status_code == 409
+    body = conflict.get_json()
+    assert body["status"] == "conflict"
+    assert body["existing_hash"] != body["incoming_hash"]
+    assert client.get("/api/events").get_json()["data"][0]["description"] == "Primeiro conteúdo"
+
+
+def test_events_expose_chained_hashes(client):
+    base = {
+        "event_type": "EQUIPMENT_INCIDENT",
+        "description": "Evento encadeado",
+        "source_device": "field-device-07",
+        "operator": "operator-demo-01",
+        "location": "Pit North",
+    }
+    first = client.post("/api/events", json={**base, "event_id": "REX-CHAIN-001"}).get_json()["data"]
+    second = client.post("/api/events", json={**base, "event_id": "REX-CHAIN-002"}).get_json()["data"]
+    assert first["chain_hash"]
+    assert second["previous_event_hash"] == first["chain_hash"]
+    assert second["chain_hash"] != first["chain_hash"]

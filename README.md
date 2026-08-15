@@ -39,16 +39,18 @@ http://127.0.0.1:5000/api/events
 
 ## REX product architecture
 
-The extension introduces a typed `OperationalEvent` with an event ID, type, description, source device, operator, timestamp, location, payload, integrity fingerprint, synchronisation status and evidence entries. The `OfflineEventEngine` persists events atomically in a local JSON store, de-duplicates event IDs, records `retry_count`, `last_attempt`, `next_retry_at` and `failure_reason`, and moves an event to `DEAD_LETTER` after three failed attempts. The EdgeAgent can also persist its local queue atomically when a `queue_path` is configured.
+The extension introduces a typed `OperationalEvent` with an event ID, type, description, source device, operator, timestamp, location, payload, integrity fingerprint, synchronisation status and evidence entries. The `OfflineEventEngine` persists events atomically in a local JSON store, de-duplicates identical event IDs, rejects same-ID/different-hash conflicts with `409`, and records `retry_count`, `last_attempt`, `next_retry_at`, `retry_delay_seconds` and `failure_reason`. Retry delays use bounded jitter to avoid synchronized retry bursts, and an event moves to `DEAD_LETTER` after three failed attempts. A supervised replay endpoint can re-queue a dead-letter event and append `DEAD_LETTER_REPLAYED` to its evidence. The EdgeAgent can also persist its local queue atomically when a `queue_path` is configured.
 
 The Evidence Chain records the following progression:
 
 ```text
 EVENT_CREATED → LOCAL_STORED → HASH_CREATED → SYNC_PENDING
              → SYNC_STARTED → SYNCED
+             └──────────────→ SYNC_FAILED → RETRY_SCHEDULED → DEAD_LETTER
+                                              └────────────→ DEAD_LETTER_REPLAYED
 ```
 
-A failed transport remains retryable rather than disappearing. The SHA-256 value is described as an **integrity fingerprint**: it makes accidental or unauthorised payload changes detectable, but it is not presented as a complete security or non-repudiation system.
+Each event exposes an `integrity_hash`, a `previous_event_hash` and a derived `chain_hash`. New events reference the preceding event hash, while malformed or conflicting submissions are rejected rather than replacing existing evidence. The SHA-256 values are described as **integrity fingerprints**: they make accidental or unauthorised payload changes detectable, but they are not presented as a complete security or non-repudiation system.
 
 ## Mine simulator
 
@@ -63,6 +65,8 @@ The simulator generates synthetic samples for `PUMP-017`, `TRUCK-021`, `CONVEYOR
 | `POST` | `/api/events` | Create, persist and queue an Operational Event; returns a server ACK payload |
 | `GET` | `/api/events` | List persisted events and Evidence Chains |
 | `POST` | `/api/events/sync` | Reconcile pending events through the Flask Core and return `SYNCED` events |
+| `POST` | `/api/events/dead-letter/replay` | Supervised re-queue of one dead-letter event |
+| `GET` | `/metrics` | Dependency-free Prometheus text metrics for API, queue, sync and dead-letter state |
 | `GET` | `/api/telemetry/mine` | Return one synthetic sample per mine equipment item |
 | `GET` | `/api/telemetry/mine/pump-sequence` | Return the controlled vibration anomaly sequence |
 | `GET` | `/api/health` | Report REX runtime health, queue, storage, edge and telemetry indicators |
@@ -123,7 +127,7 @@ python3 -m compileall backend api
 cd frontend && pnpm run build
 ```
 
-Current monorepo verification: **18 backend tests passed** and the frontend TypeScript/Vite production build succeeds. The suite now includes dedicated access-control, audit, EdgeAgent, telemetry-repository and OfflineEventEngine coverage. The suite covers event fingerprints, Evidence Chain entries, idempotent enqueue, durable reload, failed-sync retry, HTTP validation, API synchronisation, dashboard serving, controlled telemetry anomaly detection, REX Health, optional RBAC/audit behaviour and API-key failure cases.
+Current monorepo verification: **25 backend tests passed** in the local suite. The suite now covers access control, audit, EdgeAgent persistence, telemetry repositories, atomic reload, retry metadata with jitter, supervised dead-letter replay, same-ID/different-hash conflict rejection, chained hashes, HTTP validation, API synchronisation, dashboard serving, controlled telemetry anomaly detection, REX Health, Prometheus metrics and API-key failure cases. The frontend TypeScript/Vite production build remains part of the verification contract.
 
 ## Structure
 
@@ -164,7 +168,7 @@ The repository keeps the implementation additive: the original infrastructure ro
 
 ## Next engineering step
 
-The next safe step is to evolve this single-repository application from POC boundaries into production integrations: real authentication and device identity, persistent edge storage beyond the JSON option, metrics/traces, PostgreSQL, conflict resolution, and authorised MQTT/OPC-UA/Modbus gateways. The current dashboard remains a free-tier proof of concept with synthetic data; authorised integration with real equipment requires a separate security and operational review.
+The next safe step is to evolve this single-repository application from POC boundaries into production integrations: SQLite for the edge queue, chaos and disaster testing, real authentication and device identity, PostgreSQL, and authorised MQTT/OPC-UA/Modbus gateways. Metrics, retry jitter, dead-letter replay, conflict preservation and chained hashes are now implemented locally without cost. The current dashboard remains a free-tier proof of concept with synthetic data; authorised integration with real equipment requires a separate security and operational review.
 
 ## License
 
@@ -181,6 +185,6 @@ No frontend, a fila operacional usa IndexedDB como armazenamento primário, com 
 
 O Flask suporta uma API key opcional através da variável de ambiente `REX_API_KEY` e do cabeçalho `X-REX-API-Key`. Quando a variável não existe, o modo local continua acessível; quando é configurada no deployment, as rotas `/api` exigem autenticação básica de serviço. O modo `REX_RBAC_ENFORCED=1` activa papéis POC (`ADMIN`, `SUPERVISOR`, `OPERATOR`, `VIEWER`) e o `JsonAuditLog` regista actor, papel, acção, recurso e resultado. Isto é uma salvaguarda POC e não substitui autenticação industrial, RBAC de produção, gestão de segredos ou auditoria certificada.
 
-O endpoint `/api/health` torna o próprio REX observável, reportando latência média, erros API, profundidade da fila, falhas de sincronização, tamanho do armazenamento, adaptador de edge, fonte de telemetria e memória máxima do processo. O `EdgeAgent` define a próxima boundary para identidade de dispositivo, fila local, health check e cliente de sincronização. `PostgresTelemetryRepository` está documentado como substituição futura do JSON; não é activado por defeito e não exige custos ou serviços externos na POC.
+O endpoint `/api/health` torna o próprio REX observável, reportando latência média, erros API, profundidade e idade da fila, falhas de sincronização, tamanho do armazenamento, adaptador de edge, fonte de telemetria e memória máxima do processo. O endpoint `/metrics` expõe a mesma orientação operacional em formato Prometheus sem adicionar dependências: requests, erros, queue depth, queue age, eventos, syncs e dead-letters. O `EdgeAgent` define a próxima boundary para identidade de dispositivo, fila local, health check e cliente de sincronização. `PostgresTelemetryRepository` está documentado como substituição futura do JSON; não é activado por defeito e não exige custos ou serviços externos na POC.
 
 O directório `backend/edge/` define o boundary entre uma fonte de telemetria e o core REX. A implementação actual é `SyntheticTelemetryAdapter`; MQTT, OPC-UA e Modbus permanecem adaptadores futuros que só devem ser activados com gateway autorizado e revisão de segurança.

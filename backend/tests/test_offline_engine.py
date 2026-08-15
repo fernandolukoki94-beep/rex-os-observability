@@ -38,3 +38,30 @@ def test_retry_metadata_survives_reload(tmp_path):
     assert event.retry_count == 1
     assert event.last_attempt is not None
     assert event.next_retry_at is not None
+
+
+def test_retry_jitter_is_recorded_and_persists(tmp_path, monkeypatch):
+    path = tmp_path / "events.json"
+    engine = OfflineEventEngine(str(path))
+    engine.enqueue(make_event())
+    monkeypatch.setattr("backend.core.services.events.random.uniform", lambda low, high: high)
+    engine.sync_pending(lambda event: False)
+    event = engine.get("RETRY-001")
+    assert event is not None
+    assert event.retry_delay_seconds == 1.25
+    assert any(entry.event == "RETRY_SCHEDULED" for entry in event.evidence)
+    reloaded = OfflineEventEngine(str(path)).get("RETRY-001")
+    assert reloaded is not None
+    assert reloaded.retry_delay_seconds == 1.25
+
+
+def test_dead_letter_replay_requeues_event(tmp_path):
+    engine = OfflineEventEngine(str(tmp_path / "events.json"))
+    engine.enqueue(make_event())
+    for _ in range(3):
+        engine.sync_pending(lambda event: False)
+    replayed = engine.replay_dead_letter("RETRY-001")
+    assert replayed.dead_letter is False
+    assert replayed.sync_status == SyncStatus.PENDING
+    assert replayed.retry_count == 0
+    assert any(entry.event == "DEAD_LETTER_REPLAYED" for entry in replayed.evidence)

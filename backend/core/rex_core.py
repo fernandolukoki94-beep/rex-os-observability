@@ -1,13 +1,15 @@
-from flask import Flask, g, jsonify, render_template, request
+from flask import Flask, Response, g, jsonify, render_template, request
 import hmac
 import os
 import resource
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from backend.core.services import (
     JsonTelemetryRepository,
+    EventConflictError,
     OfflineEventEngine,
     OperationalEvent,
 )
@@ -35,7 +37,10 @@ event_engine = OfflineEventEngine(os.getenv("REX_EVENT_STORE", "data/offline_eve
 mine_simulator = MineSimulator()
 audit_log = JsonAuditLog()
 _request_latencies_ms = []
+_api_request_count = 0
 _api_error_count = 0
+_sync_success_count = 0
+_sync_failure_count = 0
 
 
 @app.before_request
@@ -45,8 +50,9 @@ def start_request_timer():
 
 @app.after_request
 def record_request_metrics(response):
-    global _api_error_count
+    global _api_request_count, _api_error_count
     if request.path.startswith("/api"):
+        _api_request_count += 1
         elapsed_ms = (time.perf_counter() - getattr(g, "rex_started_at", time.perf_counter())) * 1000
         _request_latencies_ms.append(round(elapsed_ms, 2))
         del _request_latencies_ms[:-100]
@@ -66,6 +72,14 @@ def rex_health():
     events = event_engine.all_events()
     failed = sum(1 for event in events if event.sync_status.value == "FAILED")
     pending = sum(1 for event in events if event.sync_status.value in {"PENDING", "SYNCING"})
+    queue_age_seconds = 0.0
+    pending_events = [event for event in events if event.sync_status.value in {"PENDING", "SYNCING", "FAILED"}]
+    if pending_events:
+        try:
+            oldest = min(datetime.fromisoformat(event.created_at.replace("Z", "+00:00")) for event in pending_events)
+            queue_age_seconds = max(0.0, round((datetime.now(timezone.utc) - oldest).total_seconds(), 2))
+        except (TypeError, ValueError):
+            queue_age_seconds = 0.0
     store_path = Path(os.getenv("REX_TELEMETRY_STORE", "data/telemetry_history.json"))
     storage_bytes = store_path.stat().st_size if store_path.exists() else 0
     avg_latency = round(sum(_request_latencies_ms) / len(_request_latencies_ms), 2) if _request_latencies_ms else 0
@@ -75,7 +89,7 @@ def rex_health():
         "components": {
             "api": {"status": "healthy", "latency_ms_avg": avg_latency, "errors": _api_error_count},
             "database": {"status": "healthy", "adapter": "JsonTelemetryRepository"},
-            "queue": {"status": "healthy" if failed == 0 else "degraded", "depth": pending, "failed": failed},
+            "queue": {"status": "healthy" if failed == 0 else "degraded", "depth": pending, "failed": failed, "age_seconds": queue_age_seconds},
             "edge": {"status": "healthy", "adapter": "SyntheticTelemetryAdapter"},
             "sync": {"status": "healthy" if failed == 0 else "degraded", "pending": pending, "failed": failed},
             "storage": {"status": "healthy", "events": len(events), "telemetry_bytes": storage_bytes},
@@ -90,6 +104,47 @@ def send_infrastructure_alert(server_name, metric, value):
     print(f"\n🚨 [ALERTA DE SISTEMA] Servidor '{server_name}' está instável!")
     print(f"⚠️ {metric} atingiu {value}%! Verificando logs de segurança...")
     # Aqui futuramente inserimos o requests.post() para a API do Telegram
+
+@app.route('/metrics', methods=['GET'])
+def prometheus_metrics():
+    """Expose a dependency-free Prometheus text surface for the REX runtime."""
+    events = event_engine.all_events()
+    pending_events = [event for event in events if event.sync_status.value in {"PENDING", "SYNCING", "FAILED"}]
+    queue_age_seconds = 0.0
+    if pending_events:
+        try:
+            oldest = min(datetime.fromisoformat(event.created_at.replace("Z", "+00:00")) for event in pending_events)
+            queue_age_seconds = max(0.0, round((datetime.now(timezone.utc) - oldest).total_seconds(), 2))
+        except (TypeError, ValueError):
+            queue_age_seconds = 0.0
+    lines = [
+        "# HELP rex_api_requests_total Total API requests observed by the REX process.",
+        "# TYPE rex_api_requests_total counter",
+        f"rex_api_requests_total {_api_request_count}",
+        "# HELP rex_api_errors_total Total API responses with status >= 400.",
+        "# TYPE rex_api_errors_total counter",
+        f"rex_api_errors_total {_api_error_count}",
+        "# HELP rex_queue_depth Current number of pending or syncing events.",
+        "# TYPE rex_queue_depth gauge",
+        f"rex_queue_depth {len([event for event in events if event.sync_status.value in {'PENDING', 'SYNCING'}])}",
+        "# HELP rex_queue_age_seconds Age in seconds of the oldest pending, syncing or failed event.",
+        "# TYPE rex_queue_age_seconds gauge",
+        f"rex_queue_age_seconds {queue_age_seconds}",
+        "# HELP rex_events_total Total operational events persisted by the REX process.",
+        "# TYPE rex_events_total gauge",
+        f"rex_events_total {len(events)}",
+        "# HELP rex_sync_success_total Total events synchronised successfully.",
+        "# TYPE rex_sync_success_total counter",
+        f"rex_sync_success_total {_sync_success_count}",
+        "# HELP rex_sync_failures_total Total failed synchronisation attempts.",
+        "# TYPE rex_sync_failures_total counter",
+        f"rex_sync_failures_total {_sync_failure_count}",
+        "# HELP rex_dead_letter_events_total Total events in dead-letter state.",
+        "# TYPE rex_dead_letter_events_total gauge",
+        f"rex_dead_letter_events_total {len([event for event in events if event.dead_letter])}",
+    ]
+    return Response("\n".join(lines) + "\n", mimetype="text/plain")
+
 
 @app.route('/api/monitor/v1/update', methods=['POST'])
 def receive_metrics():
@@ -129,14 +184,6 @@ def create_operational_event():
 
     event_id = data.get("event_id") or f"REX-EVT-{uuid.uuid4().hex[:12].upper()}"
     existing = event_engine.get(event_id)
-    if existing is not None:
-        audit_log.record(actor=actor.actor_id, role=actor.role, action="create_event", resource=event_id, result="idempotent")
-        return jsonify({
-            "status": "success",
-            "idempotent": True,
-            "data": existing.to_dict(),
-        }), 200
-
     event = OperationalEvent.create(
         event_id=event_id,
         event_type=data["event_type"],
@@ -145,11 +192,31 @@ def create_operational_event():
         operator=data["operator"],
         location=data["location"],
         payload=data.get("payload", {}),
-        created_at=data.get("created_at"),
+        created_at=data.get("created_at") or (existing.created_at if existing else None),
     )
-    event_engine.enqueue(event)
+    try:
+        stored_event = event_engine.enqueue(event)
+    except EventConflictError:
+        audit_log.record(
+            actor=actor.actor_id,
+            role=actor.role,
+            action="create_event",
+            resource=event_id,
+            result="conflict",
+            metadata={"existing_hash": existing.integrity_hash if existing else None, "incoming_hash": event.integrity_hash},
+        )
+        return jsonify({
+            "status": "conflict",
+            "message": "event_id already exists with a different integrity hash",
+            "event_id": event_id,
+            "existing_hash": existing.integrity_hash if existing else None,
+            "incoming_hash": event.integrity_hash,
+        }), 409
+    if existing is not None:
+        audit_log.record(actor=actor.actor_id, role=actor.role, action="create_event", resource=event_id, result="idempotent")
+        return jsonify({"status": "success", "idempotent": True, "data": stored_event.to_dict()}), 200
     audit_log.record(actor=actor.actor_id, role=actor.role, action="create_event", resource=event_id, result="created")
-    return jsonify({"status": "success", "data": event.to_dict()}), 201
+    return jsonify({"status": "success", "data": stored_event.to_dict()}), 201
 
 
 @app.route('/api/events', methods=['GET'])
@@ -157,13 +224,35 @@ def list_operational_events():
     return jsonify({"status": "success", "data": [event.to_dict() for event in event_engine.all_events()]}), 200
 
 
+@app.route('/api/events/dead-letter/replay', methods=['POST'])
+def replay_dead_letter_event():
+    actor = actor_from_headers(request.headers.get("X-REX-Actor"), request.headers.get("X-REX-Role") or ("OPERATOR" if not os.getenv("REX_RBAC_ENFORCED") else None))
+    if os.getenv("REX_RBAC_ENFORCED") and not actor.can("sync"):
+        audit_log.record(actor=actor.actor_id, role=actor.role, action="replay_dead_letter", resource="offline_queue", result="denied")
+        return jsonify({"status": "error", "message": "role lacks replay permission"}), 403
+    event_id = (request.get_json(silent=True) or {}).get("event_id")
+    if not event_id:
+        return jsonify({"status": "error", "message": "event_id is required"}), 400
+    try:
+        event = event_engine.replay_dead_letter(event_id)
+    except KeyError:
+        return jsonify({"status": "error", "message": "event not found"}), 404
+    except ValueError:
+        return jsonify({"status": "error", "message": "event is not dead-lettered"}), 409
+    audit_log.record(actor=actor.actor_id, role=actor.role, action="replay_dead_letter", resource=event_id, result="requeued")
+    return jsonify({"status": "success", "data": event.to_dict()}), 200
+
+
 @app.route('/api/events/sync', methods=['POST'])
 def sync_operational_events():
+    global _sync_success_count, _sync_failure_count
     actor = actor_from_headers(request.headers.get("X-REX-Actor"), request.headers.get("X-REX-Role") or ("OPERATOR" if not os.getenv("REX_RBAC_ENFORCED") else None))
     if os.getenv("REX_RBAC_ENFORCED") and not actor.can("sync"):
         audit_log.record(actor=actor.actor_id, role=actor.role, action="sync_events", resource="offline_queue", result="denied")
         return jsonify({"status": "error", "message": "role lacks sync permission"}), 403
     synced = event_engine.sync_pending(lambda event: bool(event.event_id and event.description))
+    _sync_success_count += sum(1 for event in synced if event.sync_status.value == "SYNCED")
+    _sync_failure_count += sum(1 for event in synced if event.sync_status.value == "FAILED")
     audit_log.record(actor=actor.actor_id, role=actor.role, action="sync_events", resource="offline_queue", result="completed", metadata={"count": len(synced)})
     return jsonify({
         "status": "success",
