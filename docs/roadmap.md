@@ -6,11 +6,11 @@ Completed. The official repository now contains the React/Vite frontend, Flask b
 
 ## Phase 2 — REX production foundation
 
-In progress. The runtime exposes `/api/health` with API latency, error count, queue depth, failed synchronisations, storage size, edge adapter and synthetic telemetry status. The backend also includes POC RBAC, append-only audit entries, API-key failure tests, retry metadata, dead-letter handling and a persistent EdgeAgent queue. The next motor increments are Prometheus-compatible metrics, queue age, retry jitter, dead-letter replay, conflict detection and disaster tests. New dashboard pages are deliberately deferred until the reliability core is stronger.
+In progress. The runtime exposes `/api/health` with API latency, error count, queue depth, failed synchronisations, storage size, edge adapter, synthetic telemetry status and a request `trace_id`. The backend includes POC RBAC, append-only audit entries, API-key failure tests, retry metadata with bounded jitter, dead-letter replay, conflict detection, chained hashes, Prometheus-compatible metrics and disaster tests. New dashboard pages are deliberately deferred until the reliability core is stronger.
 
 ## Phase 3 — Durable server integration
 
-The repository boundary is ready for `PostgresTelemetryRepository`, while `JsonTelemetryRepository` remains the default free/local adapter. Production work must define transactions, concurrency, idempotency keys, conflict resolution, retention, backup and recovery before field devices are connected. SQLite is the next appropriate boundary for an EdgeQueueRepository because it adds transactions, locking, queries and recovery without requiring a cloud service.
+The repository boundary is ready for `PostgresTelemetryRepository`, while `JsonTelemetryRepository` remains the default free/local adapter. The Edge Agent now supports a transactional `SQLiteQueue` selected with a `.sqlite` or `.db` path; the JSON mode remains available for backwards-compatible demonstrations. Production work must still define retention, backup, multi-process recovery and a managed database before field devices are connected.
 
 ## Phase 4 — Secure edge adapter
 
@@ -26,7 +26,7 @@ Before predictive intelligence, complete Prometheus-compatible metrics, conflict
 
 ## Next engineering sequence
 
-The recommended order is: metrics and queue age; retry jitter and maximum backoff; supervised dead-letter replay; same-ID/different-hash conflict preservation; chained Evidence Chain entries; SQLite EdgeQueueRepository; and finally real authentication, device identity, PostgreSQL and authorised industrial gateways. Each step must remain independently testable and reversible.
+The completed motor sequence is: metrics and queue age; retry jitter; supervised dead-letter replay; same-ID/different-hash conflict preservation; chained Evidence Chain entries; transactional SQLite Edge Queue; and request-level trace correlation. The next proof is chaos testing for restart, rejected sends, corruption, duplicate delivery and ACK loss. Real authentication, device identity, PostgreSQL and authorised industrial gateways remain later phases. Each step must remain independently testable and reversible.
 
 ## Delivery principle
 

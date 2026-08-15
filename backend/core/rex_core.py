@@ -49,11 +49,14 @@ _sync_failure_count = 0
 @app.before_request
 def start_request_timer():
     g.rex_started_at = time.perf_counter()
+    supplied_trace_id = request.headers.get("X-REX-Trace-ID", "").strip()
+    g.rex_trace_id = supplied_trace_id[:128] if supplied_trace_id else uuid.uuid4().hex
 
 
 @app.after_request
 def record_request_metrics(response):
     global _api_request_count, _api_error_count
+    response.headers["X-REX-Trace-ID"] = getattr(g, "rex_trace_id", uuid.uuid4().hex)
     if request.path.startswith("/api"):
         _api_request_count += 1
         elapsed_ms = (time.perf_counter() - getattr(g, "rex_started_at", time.perf_counter())) * 1000
@@ -99,6 +102,7 @@ def rex_health():
             "telemetry": {"status": "healthy", "source": "synthetic"},
         },
         "process": {"max_rss_kb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss},
+        "trace_id": getattr(g, "rex_trace_id", None),
     }), 200
 
 
@@ -121,7 +125,7 @@ def prometheus_metrics():
         except (TypeError, ValueError):
             queue_age_seconds = 0.0
     lines = [
-        "# HELP rex_api_requests_total Total API requests observed by the REX process.",
+        "# HELP rex_api_requests_total Total API requests observed by the REX process; process-scoped and reset on restart.",
         "# TYPE rex_api_requests_total counter",
         f"rex_api_requests_total {_api_request_count}",
         "# HELP rex_api_errors_total Total API responses with status >= 400.",
@@ -142,6 +146,9 @@ def prometheus_metrics():
         "# HELP rex_sync_failures_total Total failed synchronisation attempts.",
         "# TYPE rex_sync_failures_total counter",
         f"rex_sync_failures_total {_sync_failure_count}",
+        "# HELP rex_trace_requests_total Requests assigned a REX trace identifier; process-scoped.",
+        "# TYPE rex_trace_requests_total counter",
+        f"rex_trace_requests_total {_api_request_count}",
         "# HELP rex_dead_letter_events_total Total events in dead-letter state.",
         "# TYPE rex_dead_letter_events_total gauge",
         f"rex_dead_letter_events_total {len([event for event in events if event.dead_letter])}",

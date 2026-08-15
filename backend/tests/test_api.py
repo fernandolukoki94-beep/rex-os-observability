@@ -234,3 +234,21 @@ def test_events_expose_chained_hashes(client):
     assert first["chain_hash"]
     assert second["previous_event_hash"] == first["chain_hash"]
     assert second["chain_hash"] != first["chain_hash"]
+
+
+def test_trace_id_is_generated_propagated_and_reported(client):
+    response = client.get("/api/health")
+    trace_id = response.headers.get("X-REX-Trace-ID")
+    assert trace_id
+    assert response.get_json()["trace_id"] == trace_id
+
+    supplied = "demo-trace-001"
+    repeated = client.get("/api/health", headers={"X-REX-Trace-ID": supplied})
+    assert repeated.headers["X-REX-Trace-ID"] == supplied
+    assert repeated.get_json()["trace_id"] == supplied
+
+
+def test_metrics_document_process_scoped_tracing_counter(client):
+    body = client.get("/metrics").get_data(as_text=True)
+    assert "# TYPE rex_trace_requests_total counter" in body
+    assert "process-scoped" in body
