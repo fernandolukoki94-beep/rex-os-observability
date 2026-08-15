@@ -1,5 +1,5 @@
-from core.services import OfflineEventEngine, OperationalEvent, SyncStatus
-from simulator.mine import MineSimulator
+from backend.core.services import OfflineEventEngine, OperationalEvent, SyncStatus
+from backend.simulator.mine import MineSimulator
 
 
 def make_event():

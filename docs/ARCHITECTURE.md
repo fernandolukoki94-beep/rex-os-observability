@@ -38,7 +38,7 @@ REX-OS v3.0 is a distributed infrastructure observability platform composed of t
 
 ### 1. REX Core (Central API Service)
 
-**Location:** `/core/rex_core.py`
+**Location:** `/backend/core/rex_core.py`
 
 **Responsibilities:**
 - Acts as the central hub for all telemetry data
@@ -339,10 +339,10 @@ Dashboard Servers
 ### Setting Up Development Environment
 1. Clone repository
 2. Create virtual environment
-3. Install dependencies: `pip install -r requirements.txt`
+3. Install dependencies: `pip install -r backend/requirements.txt`
 4. Set environment variables from `.env.example`
 5. Run individual components:
-   - Core: `python core/rex_core.py`
+   - Core: `PYTHONPATH=. python3 -m backend.core.rex_core`
    - Agent: `python agent/rex_agent.py`
    - Dashboard: `python tui/rex_dashboard.py`
 

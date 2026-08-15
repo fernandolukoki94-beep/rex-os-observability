@@ -55,7 +55,7 @@ source venv/bin/activate
 pip install --upgrade pip setuptools wheel
 
 # Install requirements
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 
 # Verify installation
 python -c "import flask; import rich; print('✅ All dependencies installed')"
@@ -174,7 +174,7 @@ kill -9 <PID>
 
 ```bash
 python3 -m venv venv
-python3 -m pip install -r requirements.txt
+python3 -m pip install -r backend/requirements.txt
 ```
 
 ### Missing Dependencies

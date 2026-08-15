@@ -4,10 +4,10 @@ import time
 import uuid
 from pathlib import Path
 
-from core.services import OfflineEventEngine, OperationalEvent
-from simulator.mine.telemetry import MineSimulator
+from backend.core.services import OfflineEventEngine, OperationalEvent
+from backend.simulator.mine.telemetry import MineSimulator
 
-app = Flask(__name__, template_folder=str(Path(__file__).resolve().parent.parent / "templates"))
+app = Flask(__name__, template_folder=str(Path(__file__).resolve().parent.parent.parent / "templates"))
 
 # Banco de dados em memória temporário para o histórico de métricas
 server_history = {}

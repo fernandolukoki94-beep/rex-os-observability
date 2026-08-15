@@ -2,12 +2,12 @@ import json
 
 import pytest
 
-from core.rex_core import app
+from backend.core.rex_core import app
 
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    from core import rex_core
+    from backend.core import rex_core
 
     engine = rex_core.OfflineEventEngine(str(tmp_path / "events.json"))
     monkeypatch.setattr(rex_core, "event_engine", engine)
