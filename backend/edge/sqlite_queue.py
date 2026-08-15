@@ -62,6 +62,44 @@ class SQLiteQueue:
             ).fetchone()
             return json.loads(row["payload"]) if row else None
 
+    def pop_if_matches(self, expected: dict[str, Any]) -> dict[str, Any] | None:
+        """Remove the FIFO head only when it matches the delivered record.
+
+        Identity and integrity hash protect the ACK -> removal boundary. Older
+        records without those fields remain compatible through full-payload
+        comparison.
+        """
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    "SELECT sequence, payload FROM edge_queue ORDER BY sequence ASC LIMIT 1"
+                ).fetchone()
+                if row is None:
+                    self._connection.execute("COMMIT")
+                    return None
+                current = json.loads(row["payload"])
+                same_identity = (
+                    expected.get("event_id")
+                    and current.get("event_id") == expected.get("event_id")
+                    and (
+                        not expected.get("integrity_hash")
+                        or current.get("integrity_hash") == expected.get("integrity_hash")
+                    )
+                )
+                legacy_match = not expected.get("event_id") and current == expected
+                if not (same_identity or legacy_match):
+                    self._connection.execute("COMMIT")
+                    return None
+                self._connection.execute(
+                    "DELETE FROM edge_queue WHERE sequence = ?", (row["sequence"],)
+                )
+                self._connection.execute("COMMIT")
+                return current
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
+
     def pop(self) -> dict[str, Any] | None:
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")

@@ -6,7 +6,9 @@ while MQTT/OPC-UA/Modbus clients can be injected later behind the same methods.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import uuid
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -18,7 +20,7 @@ from .sqlite_queue import SQLiteQueue
 class EdgeAgent:
     device_id: str
     source: Any
-    sender: Callable[[dict], bool] | None = None
+    sender: Callable[[dict], bool | dict[str, Any]] | None = None
     queue: list[dict] = field(default_factory=list)
     queue_path: str | None = None
     _sqlite_store: SQLiteQueue | None = field(default=None, init=False, repr=False)
@@ -54,7 +56,12 @@ class EdgeAgent:
 
     def collect(self) -> dict:
         sample = self.source.sample() if hasattr(self.source, "sample") else self.source()
-        record = {"device_id": self.device_id, "sample": sample}
+        record = {
+            "device_id": self.device_id,
+            "sample": sample,
+            "event_id": f"{self.device_id}:{uuid.uuid4().hex}",
+        }
+        record["integrity_hash"] = self._integrity_hash(record)
         if self._sqlite_store is not None:
             self._sqlite_store.append(record)
             self.queue = self._sqlite_store.all()
@@ -63,26 +70,43 @@ class EdgeAgent:
             self._save()
         return record
 
+    @staticmethod
+    def _integrity_hash(record: dict[str, Any]) -> str:
+        canonical = json.dumps(record, sort_keys=True, separators=(",", ":"))
+        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _ack_matches(record: dict[str, Any], result: bool | dict[str, Any]) -> bool:
+        if isinstance(result, bool):
+            return result
+        if not isinstance(result, dict) or result.get("accepted") is not True:
+            return False
+        return (
+            result.get("event_id") == record.get("event_id")
+            and result.get("integrity_hash") == record.get("integrity_hash")
+        )
+
     def sync_once(self) -> bool:
-        if self._sqlite_store is not None:
-            first = self._sqlite_store.peek()
-            if first is None:
-                self.queue = []
-                return True
-            if self.sender is None or not self.sender(first):
-                return False
-            self._sqlite_store.pop()
-            self.queue = self._sqlite_store.all()
-            return True
-        if not self.queue:
+        first = self._sqlite_store.peek() if self._sqlite_store is not None else (
+            self.queue[0] if self.queue else None
+        )
+        if first is None:
+            self.queue = []
             return True
         if self.sender is None:
             return False
-        if self.sender(self.queue[0]):
-            self.queue.pop(0)
-            self._save()
-            return True
-        return False
+        result = self.sender(first)
+        if not self._ack_matches(first, result):
+            return False
+        if self._sqlite_store is not None:
+            removed = self._sqlite_store.pop_if_matches(first)
+            self.queue = self._sqlite_store.all()
+            return removed is not None
+        if not self.queue or self.queue[0] is not first:
+            return False
+        self.queue.pop(0)
+        self._save()
+        return True
 
     def health(self) -> dict:
         queue_depth = self._sqlite_store.depth() if self._sqlite_store is not None else len(self.queue)

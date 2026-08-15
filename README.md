@@ -15,9 +15,9 @@ Este é o repositório principal e completo de **Fernando Lucoco** para o produt
 |---|---|---|
 | Código e documentação | [rex-os-observability](https://github.com/fernandolukoki94-beep/rex-os-observability) | Monorepo oficial do produto REX |
 | Projecto de origem | [Luko MemoryOS](https://github.com/fernandolukoki94-beep/luko-memoryos) | Fundação React/Vite histórica, preservada separadamente |
-| Dashboard live | [REX Mine Intelligence](https://rex-observability-main-git-main-fernandolukoki94-beeps-projects.vercel.app/) | Deployment Vercel do branch `main` |
-| Health live | [`/api/health`](https://rex-observability-main-git-main-fernandolukoki94-beeps-projects.vercel.app/api/health) | Estado operacional público do Flask |
-| Metrics live | [`/metrics`](https://rex-observability-main-git-main-fernandolukoki94-beeps-projects.vercel.app/metrics) | Métricas Prometheus públicas |
+| Dashboard live | [REX Mine Intelligence](https://rex-os-observability-git-main-fernandolukoki94-beeps-projects.vercel.app/) | Deployment Vercel do branch `main` |
+| Health live | [`/api/health`](https://rex-os-observability-git-main-fernandolukoki94-beeps-projects.vercel.app/api/health) | Estado operacional público do Flask |
+| Metrics live | [`/metrics`](https://rex-os-observability-git-main-fernandolukoki94-beeps-projects.vercel.app/metrics) | Métricas Prometheus públicas |
 | Dashboard local | [`http://127.0.0.1:5173`](http://127.0.0.1:5173) | Frontend React/Vite oficial durante o desenvolvimento |
 | API local | [`http://127.0.0.1:5000`](http://127.0.0.1:5000) | Backend Flask e contratos operacionais |
 
@@ -130,7 +130,7 @@ python3 -m compileall backend api
 cd frontend && pnpm run build
 ```
 
-Current monorepo verification: **34 backend tests passed** in the local suite. The suite covers access control, audit, JSON and SQLite EdgeAgent persistence, telemetry repositories, atomic reload, retry metadata with jitter, supervised dead-letter replay, same-ID/different-hash conflict rejection, chained hashes, HTTP validation, API synchronisation, dashboard serving, controlled telemetry anomaly detection, REX Health, Prometheus metrics, request trace correlation, API-key failure cases and chaos scenarios for restart, rejected transport, SQLite integrity and 10,000 offline samples. The frontend TypeScript/Vite production build remains part of the verification contract.
+Current monorepo verification: **36 backend tests passed** in the local suite. The suite covers access control, audit, JSON and SQLite EdgeAgent persistence, telemetry repositories, atomic reload, retry metadata with jitter, supervised dead-letter replay, same-ID/different-hash conflict rejection, chained hashes, HTTP validation, API synchronisation, dashboard serving, controlled telemetry anomaly detection, REX Health, Prometheus metrics, request trace correlation, API-key failure cases, chaos scenarios for restart, rejected transport, SQLite integrity and 10,000 offline samples, plus deterministic ACK → crash → retry recovery with idempotent receiver deduplication. The frontend TypeScript/Vite production build remains part of the verification contract.
 
 ## Structure
 
@@ -173,7 +173,7 @@ The repository keeps the implementation additive: the original infrastructure ro
 
 ## Next engineering step
 
-The next safe step is to evolve this single-repository application from hardened POC boundaries into production integrations: multi-process chaos testing, real authentication and device identity, PostgreSQL, retention and backup policies, and authorised MQTT/OPC-UA/Modbus gateways. SQLite Edge Queue, metrics, request trace correlation, retry jitter, dead-letter replay, conflict preservation, chained hashes and local disaster tests are now implemented without cost. The current dashboard remains a free-tier proof of concept with synthetic data; authorised integration with real equipment requires a separate security and operational review.
+The next safe step is to evolve this single-repository application from hardened POC boundaries into production integrations: multi-process chaos testing, real authentication and device identity, PostgreSQL, retention and backup policies, and authorised MQTT/OPC-UA/Modbus gateways. SQLite Edge Queue, metrics, request trace correlation, retry jitter, dead-letter replay, conflict preservation, chained hashes and local disaster tests are now implemented without cost. The current dashboard remains a free-tier proof of concept with synthetic data; authorised integration with real equipment requires a separate security and operational review. The V1 also proves that a crash after a valid ACK but before queue removal leaves the event recoverable and prevents a second semantic effect through receiver idempotency.
 
 ## License
 

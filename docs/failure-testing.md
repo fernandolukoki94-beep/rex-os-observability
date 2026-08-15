@@ -20,6 +20,6 @@ O REX deve tratar falhas como estados operacionais explícitos, não como excep�
 | Cadeia de hashes | Testado | Cada evento referencia o hash do evento anterior |
 | Eventos concorrentes | Próximo teste | JSON não substitui garantias transaccionais de PostgreSQL |
 | Payload excessivo ou telemetria inválida | Próximo teste | Requer limites de tamanho e schema validation explícitos |
-| Reinício durante sincronização | Parcialmente testado | O Edge Agent recupera após encerramento antes do drain; interrupção exactamente entre ACK e remoção exige teste multi-processo |
+| Reinício durante sincronização | Testado | O Edge Agent recupera após encerramento; o cenário ACK → crash → retry mantém o evento na fila e a deduplicação do receiver impede um segundo efeito semântico |
 
-A regra de segurança da POC é conservadora: **sem ACK válido, nenhum evento é apresentado como sincronizado**. A suite local agora prova reinício, rejeição de transporte, integridade SQLite e acumulação de 10.000 amostras. A validação industrial deverá acrescentar testes multi-processo, retenção, backup/restore, replay protection, autenticação de dispositivos e a janela exacta entre ACK e remoção da fila.
+A regra de segurança da POC é conservadora: **sem ACK válido, nenhum evento é apresentado como sincronizado**. A suite local prova reinício, rejeição de transporte, integridade SQLite, acumulação de 10.000 amostras e a janela exacta ACK → crash → retry. A garantia é at-least-once com deduplicação semântica; não é uma afirmação de exactly-once distribuído. A validação industrial deverá acrescentar testes multi-processo, retenção, backup/restore, replay protection, autenticação de dispositivos e transporte real autorizado.
