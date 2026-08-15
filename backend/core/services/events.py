@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -41,6 +41,11 @@ class OperationalEvent:
     integrity_hash: str
     sync_status: SyncStatus = SyncStatus.PENDING
     evidence: List[EvidenceEntry] = field(default_factory=list)
+    retry_count: int = 0
+    last_attempt: Optional[str] = None
+    next_retry_at: Optional[str] = None
+    failure_reason: Optional[str] = None
+    dead_letter: bool = False
 
     @classmethod
     def create(
@@ -87,6 +92,16 @@ class OperationalEvent:
             )
         )
 
+    def schedule_retry(self, reason: str, max_retries: int = 3) -> None:
+        self.failure_reason = reason
+        if self.retry_count >= max_retries:
+            self.dead_letter = True
+            self.next_retry_at = None
+            self.add_evidence("DEAD_LETTER", f"Retry limit reached after {self.retry_count} attempts: {reason}")
+            return
+        delay_seconds = 2 ** max(0, self.retry_count - 1)
+        self.next_retry_at = (datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)).isoformat()
+
     def transition(self, status: SyncStatus, detail: str) -> None:
         self.sync_status = status
         evidence_event = {
@@ -119,4 +134,9 @@ class OperationalEvent:
             integrity_hash=data["integrity_hash"],
             sync_status=SyncStatus(data.get("sync_status", SyncStatus.PENDING.value)),
             evidence=evidence,
+            retry_count=int(data.get("retry_count", 0)),
+            last_attempt=data.get("last_attempt"),
+            next_retry_at=data.get("next_retry_at"),
+            failure_reason=data.get("failure_reason"),
+            dead_letter=bool(data.get("dead_letter", False)),
         )

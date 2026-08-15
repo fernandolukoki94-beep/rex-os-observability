@@ -39,7 +39,7 @@ http://127.0.0.1:5000/api/events
 
 ## REX product architecture
 
-The extension introduces a typed `OperationalEvent` with an event ID, type, description, source device, operator, timestamp, location, payload, integrity fingerprint, synchronisation status and evidence entries. The `OfflineEventEngine` persists events atomically in a local JSON store, de-duplicates event IDs and retries events in `FAILED` state.
+The extension introduces a typed `OperationalEvent` with an event ID, type, description, source device, operator, timestamp, location, payload, integrity fingerprint, synchronisation status and evidence entries. The `OfflineEventEngine` persists events atomically in a local JSON store, de-duplicates event IDs, records `retry_count`, `last_attempt`, `next_retry_at` and `failure_reason`, and moves an event to `DEAD_LETTER` after three failed attempts. The EdgeAgent can also persist its local queue atomically when a `queue_path` is configured.
 
 The Evidence Chain records the following progression:
 
@@ -123,7 +123,7 @@ python3 -m compileall backend api
 cd frontend && pnpm run build
 ```
 
-Current monorepo verification: **12 backend tests passed** and the frontend TypeScript/Vite production build succeeds. The suite covers event fingerprints, Evidence Chain entries, idempotent enqueue, durable reload, failed-sync retry, HTTP validation, API synchronisation, dashboard serving, controlled telemetry anomaly detection, REX Health, optional RBAC/audit behaviour and API-key failure cases.
+Current monorepo verification: **18 backend tests passed** and the frontend TypeScript/Vite production build succeeds. The suite now includes dedicated access-control, audit, EdgeAgent, telemetry-repository and OfflineEventEngine coverage. The suite covers event fingerprints, Evidence Chain entries, idempotent enqueue, durable reload, failed-sync retry, HTTP validation, API synchronisation, dashboard serving, controlled telemetry anomaly detection, REX Health, optional RBAC/audit behaviour and API-key failure cases.
 
 ## Structure
 
@@ -142,7 +142,7 @@ rex-os-observability/
 │   ├── simulator/mine/
 │   ├── edge/
 │   │   ├── adapter.py
-│   │   └── agent.py
+│   │   └── agent.py  # optional persistent local queue
 │   ├── tests/
 │   └── requirements.txt
 ├── api/index.py
@@ -164,7 +164,7 @@ The repository keeps the implementation additive: the original infrastructure ro
 
 ## Next engineering step
 
-The next safe step is to strengthen this single-repository application with an explicit edge adapter boundary, durable production storage, conflict resolution, authenticated acknowledgement and observability of the sync process. The current dashboard remains a free-tier proof of concept with synthetic data; authorised integration with real equipment requires a separate security and operational review.
+The next safe step is to evolve this single-repository application from POC boundaries into production integrations: real authentication and device identity, persistent edge storage beyond the JSON option, metrics/traces, PostgreSQL, conflict resolution, and authorised MQTT/OPC-UA/Modbus gateways. The current dashboard remains a free-tier proof of concept with synthetic data; authorised integration with real equipment requires a separate security and operational review.
 
 ## License
 

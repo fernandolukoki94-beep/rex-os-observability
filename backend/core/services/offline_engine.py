@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Callable, Iterable, List, Optional
 
 from .events import OperationalEvent, SyncStatus
@@ -51,13 +52,15 @@ class OfflineEventEngine:
         return [
             event
             for event in self._events
-            if event.sync_status in {SyncStatus.PENDING, SyncStatus.FAILED}
+            if event.sync_status in {SyncStatus.PENDING, SyncStatus.FAILED} and not event.dead_letter
         ]
 
     def sync_pending(self, sender: Callable[[OperationalEvent], bool]) -> List[OperationalEvent]:
         results: List[OperationalEvent] = []
         for event in self.pending_events():
-            event.transition(SyncStatus.SYNCING, "Connectivity available")
+            event.retry_count += 1
+            event.last_attempt = datetime.now(timezone.utc).isoformat()
+            event.transition(SyncStatus.SYNCING, f"Connectivity available; attempt #{event.retry_count}")
             self._save()
             try:
                 accepted = sender(event)
@@ -66,7 +69,13 @@ class OfflineEventEngine:
                 detail = f"Transport error: {exc}"
             else:
                 detail = "Core acknowledged event" if accepted else "Core rejected event"
-            event.transition(SyncStatus.SYNCED if accepted else SyncStatus.FAILED, detail)
+            if accepted:
+                event.failure_reason = None
+                event.next_retry_at = None
+                event.transition(SyncStatus.SYNCED, detail)
+            else:
+                event.transition(SyncStatus.FAILED, detail)
+                event.schedule_retry(detail)
             self._save()
             results.append(event)
         return results
