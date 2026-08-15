@@ -5,22 +5,27 @@
 
 > **Infrastructure Observability + Offline Edge + Operational Event Intelligence.**
 
-REX-OS Mine Intelligence é o portfólio único de **Fernando Lucoco**. Este mesmo repositório contém o Core Python/Flask, os contratos de eventos operacionais, o simulador de telemetria, o dashboard web e a demonstração offline-first. Não existe um segundo repositório necessário para compreender ou executar o projecto.
+# REX Mine Intelligence
+
+> **REX Mine Intelligence is an offline-first operational intelligence platform for industrial and mining environments.**
+
+Este é o repositório principal e completo de **Fernando Lucoco** para o produto REX. Contém frontend, backend, offline engine, telemetria, Evidence Chain, testes, documentação e deployment. O [Luko MemoryOS](https://github.com/fernandolukoki94-beep/luko-memoryos) permanece como projecto de origem/legado e não é necessário para executar o REX.
 
 | Acesso | Link | Conteúdo |
 |---|---|---|
-| Código e documentação | [rex-os-observability](https://github.com/fernandolukoki94-beep/rex-os-observability) | Aplicação completa, arquitectura, testes e roadmap |
-| Dashboard publicado | [Abrir REX Mine Intelligence](https://rex-mine-intelligence-web.vercel.app/) | Interface operacional servida pelo Flask deste repositório |
-| API mineira | [`/api/telemetry/mine`](https://rex-mine-intelligence-web.vercel.app/api/telemetry/mine) | Snapshot sintético de equipamentos |
+| Código e documentação | [rex-os-observability](https://github.com/fernandolukoki94-beep/rex-os-observability) | Monorepo oficial do produto REX |
+| Projecto de origem | [Luko MemoryOS](https://github.com/fernandolukoki94-beep/luko-memoryos) | Fundação React/Vite histórica, preservada separadamente |
+| Dashboard local | [`http://127.0.0.1:5173`](http://127.0.0.1:5173) | Frontend React/Vite oficial durante o desenvolvimento |
+| API local | [`http://127.0.0.1:5000`](http://127.0.0.1:5000) | Backend Flask e contratos operacionais |
 
-REX-OS é um sistema de observabilidade distribuída que evolui de telemetria de infraestrutura para inteligência operacional edge. As rotas de infraestrutura originais permanecem intactas; a extensão `feature/mine-intelligence-v1` acrescenta eventos operacionais offline, Evidence Chain, telemetria mineira determinística e uma interface visual no próprio Core.
+REX-OS é um sistema de observabilidade distribuída que evolui de telemetria de infraestrutura para inteligência operacional edge. As rotas de infraestrutura originais permanecem intactas; a `main` contém eventos operacionais offline, Evidence Chain, telemetria mineira determinística, um frontend React/Vite e um backend Flask no mesmo produto.
 
 ## Visual access
 
 O dashboard web é servido pela rota `/` do Flask e consome os contratos do mesmo Core. A aplicação apresenta claramente que os dados são sintéticos e que a integração com sensores reais exige autorização e revisão de segurança. Para executar localmente:
 
 ```bash
-python3 -m core.rex_core
+PYTHONPATH=. python3 -m backend.core.rex_core
 ```
 
 Depois abra `http://127.0.0.1:5000/`. Os endpoints JSON continuam disponíveis para integração e testes:
@@ -31,7 +36,7 @@ http://127.0.0.1:5000/api/telemetry/mine/pump-sequence
 http://127.0.0.1:5000/api/events
 ```
 
-## What changed in `feature/mine-intelligence-v1`
+## REX product architecture
 
 The extension introduces a typed `OperationalEvent` with an event ID, type, description, source device, operator, timestamp, location, payload, integrity fingerprint, synchronisation status and evidence entries. The `OfflineEventEngine` persists events atomically in a local JSON store, de-duplicates event IDs and retries events in `FAILED` state.
 
@@ -83,50 +88,65 @@ curl http://127.0.0.1:5000/api/events
 ```bash
 git clone https://github.com/fernandolukoki94-beep/rex-os-observability.git
 cd rex-os-observability
-git checkout feature/mine-intelligence-v1
+git checkout main
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-python3 -m core.rex_core
+pip install -r backend/requirements.txt
+PYTHONPATH=. python3 -m backend.core.rex_core
 ```
 
-The Core listens on `http://127.0.0.1:5000`. The local event store defaults to `data/offline_events.json`; set `REX_EVENT_STORE` to use another path during a demo or test.
+O backend Flask escuta em `http://127.0.0.1:5000` e o frontend React em `http://127.0.0.1:5173`. O event store local assume `data/offline_events.json`; defina `REX_EVENT_STORE` para usar outro caminho durante uma demonstração ou teste.
+
+Para executar o frontend, abra um segundo terminal:
+
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
 
 ## Verification
 
 ```bash
-python3 -m pytest -q
-python3 -m compileall core simulator tests
+PYTHONPATH=. python3 -m pytest -q backend/tests
+python3 -m compileall backend api
+cd frontend && pnpm run build
 ```
 
-Current branch verification: **6 tests passed**. The test suite covers event fingerprints, Evidence Chain entries, idempotent enqueue, durable reload, failed-sync retry, HTTP validation, API synchronisation and controlled telemetry anomaly detection.
+Current monorepo verification: **7 backend tests passed** and the frontend TypeScript/Vite production build succeeds. The suite covers event fingerprints, Evidence Chain entries, idempotent enqueue, durable reload, failed-sync retry, HTTP validation, API synchronisation, dashboard serving and controlled telemetry anomaly detection.
 
 ## Structure
 
 ```text
 rex-os-observability/
-├── core/
-│   ├── rex_core.py
-│   └── services/
-│       ├── events.py
-│       └── offline_engine.py
-├── simulator/mine/
-│   └── telemetry.py
-├── agent/agent_mock.py
+├── frontend/
+│   ├── src/pages/RexLanding.tsx
+│   ├── src/pages/RexOperations.tsx
+│   ├── src/lib/rexOfflineStore.ts
+│   ├── package.json
+│   └── vite.config.ts
+├── backend/
+│   ├── core/
+│   │   ├── rex_core.py
+│   │   └── services/
+│   ├── simulator/mine/
+│   ├── agent/
+│   ├── tests/
+│   └── requirements.txt
 ├── api/index.py
 ├── templates/index.html
 ├── vercel.json
-├── tests/
-│   ├── test_mine_intelligence.py
-│   └── test_api.py
 └── docs/
     ├── ARCHITECTURE.md
     ├── API.md
     ├── INSTALLATION.md
-    └── MINE_INTELLIGENCE_AUDIT.md
+    ├── MINE_INTELLIGENCE_AUDIT.md
+    ├── offline-engine.md
+    ├── demo.md
+    └── roadmap.md
 ```
 
-The repository keeps the implementation additive: the original infrastructure routes remain available, while `templates/index.html` provides the visual dashboard and `api/index.py` exposes the same Flask application to Vercel. A production database, authentication layer and industrial gateway are intentionally not claimed as present.
+The repository keeps the implementation additive: the original infrastructure routes remain available, while `frontend/` provides the React/Vite interface, `backend/` provides Flask and the operational domain, and `api/index.py` exposes the backend runtime to Vercel. PostgreSQL, Redis, production authentication and an industrial gateway remain future integrations and are not claimed as present.
 
 ## Next engineering step
 
