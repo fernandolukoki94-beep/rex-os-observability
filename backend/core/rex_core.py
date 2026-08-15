@@ -30,12 +30,15 @@ def enforce_optional_api_key():
             return jsonify({"status": "error", "message": "API key required"}), 401
     return None
 
+_runtime_store_dir = "/tmp/rex-data" if os.getenv("VERCEL") else "data"
 telemetry_repository = JsonTelemetryRepository(
-    os.getenv("REX_TELEMETRY_STORE", "data/telemetry_history.json")
+    os.getenv("REX_TELEMETRY_STORE", f"{_runtime_store_dir}/telemetry_history.json")
 )
-event_engine = OfflineEventEngine(os.getenv("REX_EVENT_STORE", "data/offline_events.json"))
+event_engine = OfflineEventEngine(
+    os.getenv("REX_EVENT_STORE", f"{_runtime_store_dir}/offline_events.json")
+)
 mine_simulator = MineSimulator()
-audit_log = JsonAuditLog()
+audit_log = JsonAuditLog(os.getenv("REX_AUDIT_STORE", f"{_runtime_store_dir}/audit_log.json"))
 _request_latencies_ms = []
 _api_request_count = 0
 _api_error_count = 0
