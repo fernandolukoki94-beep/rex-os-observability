@@ -8,6 +8,9 @@ O REX deve tratar falhas como estados operacionais explícitos, não como excep�
 | API key ausente ou incorrecta | Testado | `401` quando `REX_API_KEY` está configurada |
 | Papel sem permissão de escrita | Testado | `403` quando `REX_RBAC_ENFORCED=1` |
 | Fila persistida e recarregada | Testado | Eventos não desaparecem após reabertura |
+| Edge Queue SQLite após reinício | Testado | O agente reabre a base local e reconcilia os eventos quando o transporte regressa |
+| Transporte rejeita o próximo evento | Testado | O head da fila permanece intacto e os restantes eventos não são descartados |
+| Acumulação de 10.000 eventos offline | Testado | SQLite conserva FIFO, profundidade e integridade da base local |
 | Sync failed e retry | Testado | O evento permanece retryable com jitter e metadados persistidos |
 | JSON corrompido | Testado | O motor falha fechado, inicia vazio e volta a persistir atomicamente |
 | Timeout de rede | Frontend boundary | O evento permanece local e retryable |
@@ -17,6 +20,6 @@ O REX deve tratar falhas como estados operacionais explícitos, não como excep�
 | Cadeia de hashes | Testado | Cada evento referencia o hash do evento anterior |
 | Eventos concorrentes | Próximo teste | JSON não substitui garantias transaccionais de PostgreSQL |
 | Payload excessivo ou telemetria inválida | Próximo teste | Requer limites de tamanho e schema validation explícitos |
-| Reinício durante sincronização | Próximo teste | Requer cenário de processo interrompido e recuperação |
+| Reinício durante sincronização | Parcialmente testado | O Edge Agent recupera após encerramento antes do drain; interrupção exactamente entre ACK e remoção exige teste multi-processo |
 
-A regra de segurança da POC é conservadora: **sem ACK válido, nenhum evento é apresentado como sincronizado**. A validação industrial deverá acrescentar testes de carga, concorrência, recuperação, retenção, backup/restore, replay protection e autenticação de dispositivos.
+A regra de segurança da POC é conservadora: **sem ACK válido, nenhum evento é apresentado como sincronizado**. A suite local agora prova reinício, rejeição de transporte, integridade SQLite e acumulação de 10.000 amostras. A validação industrial deverá acrescentar testes multi-processo, retenção, backup/restore, replay protection, autenticação de dispositivos e a janela exacta entre ACK e remoção da fila.

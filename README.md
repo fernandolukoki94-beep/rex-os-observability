@@ -42,7 +42,7 @@ http://127.0.0.1:5000/api/events
 
 ## REX product architecture
 
-The extension introduces a typed `OperationalEvent` with an event ID, type, description, source device, operator, timestamp, location, payload, integrity fingerprint, synchronisation status and evidence entries. The `OfflineEventEngine` persists events atomically in a local JSON store, de-duplicates identical event IDs, rejects same-ID/different-hash conflicts with `409`, and records `retry_count`, `last_attempt`, `next_retry_at`, `retry_delay_seconds` and `failure_reason`. Retry delays use bounded jitter to avoid synchronized retry bursts, and an event moves to `DEAD_LETTER` after three failed attempts. A supervised replay endpoint can re-queue a dead-letter event and append `DEAD_LETTER_REPLAYED` to its evidence. The EdgeAgent can also persist its local queue atomically when a `queue_path` is configured.
+The extension introduces a typed `OperationalEvent` with an event ID, type, description, source device, operator, timestamp, location, payload, integrity fingerprint, synchronisation status and evidence entries. The `OfflineEventEngine` persists events atomically in a local JSON store, de-duplicates identical event IDs, rejects same-ID/different-hash conflicts with `409`, and records `retry_count`, `last_attempt`, `next_retry_at`, `retry_delay_seconds` and `failure_reason`. Retry delays use bounded jitter to avoid synchronized retry bursts, and an event moves to `DEAD_LETTER` after three failed attempts. A supervised replay endpoint can re-queue a dead-letter event and append `DEAD_LETTER_REPLAYED` to its evidence. The EdgeAgent can persist its local queue atomically as JSON for compatibility or transactionally in SQLite when `queue_path` ends in `.sqlite` or `.db`. The SQLite adapter uses WAL, full synchronous commits, local locking and FIFO transactions without adding a cloud dependency.
 
 The Evidence Chain records the following progression:
 
@@ -72,7 +72,7 @@ The simulator generates synthetic samples for `PUMP-017`, `TRUCK-021`, `CONVEYOR
 | `GET` | `/metrics` | Dependency-free Prometheus text metrics for API, queue, sync and dead-letter state |
 | `GET` | `/api/telemetry/mine` | Return one synthetic sample per mine equipment item |
 | `GET` | `/api/telemetry/mine/pump-sequence` | Return the controlled vibration anomaly sequence |
-| `GET` | `/api/health` | Report REX runtime health, queue, storage, edge and telemetry indicators |
+| `GET` | `/api/health` | Report REX runtime health, queue, storage, edge, telemetry and request trace identifier |
 | `GET` | `/api/audit` | Return the append-only POC audit entries |
 
 Example event:
@@ -130,7 +130,7 @@ python3 -m compileall backend api
 cd frontend && pnpm run build
 ```
 
-Current monorepo verification: **25 backend tests passed** in the local suite. The suite now covers access control, audit, EdgeAgent persistence, telemetry repositories, atomic reload, retry metadata with jitter, supervised dead-letter replay, same-ID/different-hash conflict rejection, chained hashes, HTTP validation, API synchronisation, dashboard serving, controlled telemetry anomaly detection, REX Health, Prometheus metrics and API-key failure cases. The frontend TypeScript/Vite production build remains part of the verification contract.
+Current monorepo verification: **34 backend tests passed** in the local suite. The suite covers access control, audit, JSON and SQLite EdgeAgent persistence, telemetry repositories, atomic reload, retry metadata with jitter, supervised dead-letter replay, same-ID/different-hash conflict rejection, chained hashes, HTTP validation, API synchronisation, dashboard serving, controlled telemetry anomaly detection, REX Health, Prometheus metrics, request trace correlation, API-key failure cases and chaos scenarios for restart, rejected transport, SQLite integrity and 10,000 offline samples. The frontend TypeScript/Vite production build remains part of the verification contract.
 
 ## Structure
 
@@ -149,7 +149,8 @@ rex-os-observability/
 │   ├── simulator/mine/
 │   ├── edge/
 │   │   ├── adapter.py
-│   │   └── agent.py  # optional persistent local queue
+│   │   ├── agent.py
+│   │   └── sqlite_queue.py  # transactional local queue
 │   ├── tests/
 │   └── requirements.txt
 ├── api/index.py
@@ -164,14 +165,15 @@ rex-os-observability/
     ├── demo.md
     ├── roadmap.md
     ├── rex-health.md
-    └── failure-testing.md
+    ├── failure-testing.md
+    ├── observability-hardening.md
 ```
 
 The repository keeps the implementation additive: the original infrastructure routes remain available, while `frontend/` provides the React/Vite interface, `backend/` provides Flask and the operational domain, and `api/index.py` exposes the backend runtime to Vercel. PostgreSQL, Redis, production authentication and an industrial gateway remain future integrations and are not claimed as present.
 
 ## Next engineering step
 
-The next safe step is to evolve this single-repository application from POC boundaries into production integrations: SQLite for the edge queue, chaos and disaster testing, real authentication and device identity, PostgreSQL, and authorised MQTT/OPC-UA/Modbus gateways. Metrics, retry jitter, dead-letter replay, conflict preservation and chained hashes are now implemented locally without cost. The current dashboard remains a free-tier proof of concept with synthetic data; authorised integration with real equipment requires a separate security and operational review.
+The next safe step is to evolve this single-repository application from hardened POC boundaries into production integrations: multi-process chaos testing, real authentication and device identity, PostgreSQL, retention and backup policies, and authorised MQTT/OPC-UA/Modbus gateways. SQLite Edge Queue, metrics, request trace correlation, retry jitter, dead-letter replay, conflict preservation, chained hashes and local disaster tests are now implemented without cost. The current dashboard remains a free-tier proof of concept with synthetic data; authorised integration with real equipment requires a separate security and operational review.
 
 ## License
 
@@ -188,6 +190,6 @@ No frontend, a fila operacional usa IndexedDB como armazenamento primário, com 
 
 O Flask suporta uma API key opcional através da variável de ambiente `REX_API_KEY` e do cabeçalho `X-REX-API-Key`. Quando a variável não existe, o modo local continua acessível; quando é configurada no deployment, as rotas `/api` exigem autenticação básica de serviço. O modo `REX_RBAC_ENFORCED=1` activa papéis POC (`ADMIN`, `SUPERVISOR`, `OPERATOR`, `VIEWER`) e o `JsonAuditLog` regista actor, papel, acção, recurso e resultado. Isto é uma salvaguarda POC e não substitui autenticação industrial, RBAC de produção, gestão de segredos ou auditoria certificada.
 
-O endpoint `/api/health` torna o próprio REX observável, reportando latência média, erros API, profundidade e idade da fila, falhas de sincronização, tamanho do armazenamento, adaptador de edge, fonte de telemetria e memória máxima do processo. O endpoint `/metrics` expõe a mesma orientação operacional em formato Prometheus sem adicionar dependências: requests, erros, queue depth, queue age, eventos, syncs e dead-letters. O `EdgeAgent` define a próxima boundary para identidade de dispositivo, fila local, health check e cliente de sincronização. `PostgresTelemetryRepository` está documentado como substituição futura do JSON; não é activado por defeito e não exige custos ou serviços externos na POC.
+O endpoint `/api/health` torna o próprio REX observável, reportando latência média, erros API, profundidade e idade da fila, falhas de sincronização, tamanho do armazenamento, adaptador de edge, fonte de telemetria, memória máxima do processo e `trace_id`. O endpoint `/metrics` expõe a mesma orientação operacional em formato Prometheus sem adicionar dependências: requests, erros, queue depth, queue age, eventos, syncs, tracing e dead-letters, com contadores de processo explicitamente documentados como process-scoped. O `EdgeAgent` suporta a fila transaccional SQLite através de `queue_path="data/edge_queue.sqlite"`; JSON permanece disponível para compatibilidade. `PostgresTelemetryRepository` está documentado como substituição futura do JSON; não é activado por defeito e não exige custos ou serviços externos na POC.
 
 O directório `backend/edge/` define o boundary entre uma fonte de telemetria e o core REX. A implementação actual é `SyntheticTelemetryAdapter`; MQTT, OPC-UA e Modbus permanecem adaptadores futuros que só devem ser activados com gateway autorizado e revisão de segurança.
